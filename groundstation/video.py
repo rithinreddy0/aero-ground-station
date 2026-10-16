@@ -6,6 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from collections import deque
+from .detection import YoloDetector, local_path
 
 # Avoid oversubscribing the laptop across capture and inference threads.
 cv2.setNumThreads(2)
@@ -33,6 +34,10 @@ class Video:
         self.demo_video_loss = False
         self.inference_ms = 0
         self.inference_frame_age_s = None
+        self.ai_details = {}
+        self.ai_jpeg = None
+        self.ai_sequence = 0
+        self.ai_completed_at = 0
         self.frame_times = deque(maxlen=60)
         self.demo_data = {}
         self.threads = [threading.Thread(target=self.capture, daemon=True),
@@ -56,12 +61,17 @@ class Video:
 
     def capture(self):
         cap = None
+        recording = False
+        source_period = 0
         tick = time.monotonic()
         try:
             if self.config.video_source != "demo":
                 source = self.config.video_source
                 if isinstance(source, str) and source.isdigit():
                     source = int(source)
+                elif isinstance(source, str) and local_path(source).is_file():
+                    source = str(local_path(source))
+                    recording = True
                 backend = cv2.CAP_DSHOW if os.name == "nt" and isinstance(source, int) else cv2.CAP_ANY
                 cap = cv2.VideoCapture(source, backend)
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.video_width)
@@ -70,6 +80,9 @@ class Video:
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 if not cap.isOpened():
                     raise RuntimeError("Capture device cannot open; check index and driver")
+                if recording:
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    source_period = 1 / fps if np.isfinite(fps) and fps > 0 else 1 / self.config.video_fps
             while not self.stop_event.is_set():
                 start = time.monotonic()
                 if cap is None:
@@ -81,9 +94,18 @@ class Video:
                 else:
                     ok, frame = cap.read()
                     if not ok:
-                        self.status = "No frames from capture device"
-                        self.stop_event.wait(.1)
-                        continue
+                        if recording and self.config.video_loop:
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            ok, frame = cap.read()
+                        if ok:
+                            pass
+                        elif recording:
+                            self.status = 'Recording ended; video stale'
+                            break
+                        else:
+                            self.status = "No frames from capture device"
+                            self.stop_event.wait(.1)
+                            continue
                 ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality])
                 if ok:
                     with self.lock:
@@ -98,6 +120,8 @@ class Video:
                     tick = start
                 if cap is None:
                     self.stop_event.wait(max(0, 1/self.config.video_fps-(time.monotonic()-start)))
+                elif recording:
+                    self.stop_event.wait(max(0, source_period-(time.monotonic()-start)))
         except Exception as exc:
             self.status = f"Video error: {exc}"
         finally:
@@ -112,12 +136,10 @@ class Video:
         self.ai_status = "Built-in HOG person detector ready (baseline)"
         if self.config.yolo_model:
             try:
-                from ultralytics import YOLO
-                path = Path(self.config.yolo_model)
-                if not path.is_file():
-                    raise ValueError("Model must be an existing local file")
-                model = YOLO(str(path))
-                self.ai_status = "YOLO ready"
+                if self.config.video_source != 'demo':
+                    self.ai_status = 'Loading AURA YOLO model; first result may take several seconds'
+                    model = YoloDetector(self.config)
+                    self.ai_status = f'AURA YOLO ready: {model.path.name} / {model.hardware.device}'
             except Exception as exc:
                 self.ai_status = f"AI unavailable: {exc}"
         if self.config.osd_regions:
@@ -156,20 +178,40 @@ class Video:
             if model and now-last_ai >= self.config.detection_interval_s:
                 last_ai = now
                 try:
-                    result = model.predict(frame, conf=self.config.confidence_threshold, imgsz=640, verbose=False)[0]
+                    boxes = model.predict(frame)
+                    picture = frame.copy()
+                    h, w = picture.shape[:2]
+                    for detection in boxes:
+                        x1, y1, x2, y2 = [int(x * size) for x, size in
+                                           zip(detection['box'], (w, h, w, h))]
+                        cv2.rectangle(picture, (x1, y1), (x2, y2), (108, 230, 193), 2)
+                        label = f"{detection['source_label']} {detection['confidence']:.0%}"
+                        cv2.putText(picture, label, (x1, max(15, y1 - 5)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, .45, (108, 230, 193), 1)
+                    elapsed_ms = (time.monotonic() - now) * 1000
+                    caption = f'AURA | frame {sequence} | {elapsed_ms:.0f} ms | {len(boxes)} detections'
+                    cv2.rectangle(picture, (0, 0), (w, 25), (20, 25, 25), -1)
+                    cv2.putText(picture, caption, (6, 18), cv2.FONT_HERSHEY_SIMPLEX,
+                                .42, (235, 240, 235), 1)
+                    encoded_ok, encoded = cv2.imencode('.jpg', picture,
+                                                       [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality])
                     self.inference_ms=(time.monotonic()-now)*1000
                     self.inference_frame_age_s=time.monotonic()-frame_at
-                    h, w = frame.shape[:2]
-                    boxes = [{"label": result.names[int(b.cls.item())], "confidence": float(b.conf.item()),
-                              "box": [float(x)/size for x, size in zip(b.xyxy[0].tolist(), (w, h, w, h))]}
-                             for b in result.boxes]
                     with self.lock:
                         self.detections, self.detection_sequence = boxes, sequence
                         self.detection_at = frame_at
-                    self.ai_status = "YOLO running"
+                        self.ai_details = model.last_details.copy()
+                        if encoded_ok:
+                            self.ai_jpeg = encoded.tobytes()
+                            self.ai_sequence = sequence
+                            self.ai_completed_at = time.monotonic()
+                    self.ai_status = f'AURA YOLO running: {model.path.name} / {model.hardware.device}'
                 except Exception as exc:
+                    with self.lock:
+                        self.detections = []
+                        self.detection_at = 0
                     self.ai_status = f"Inference error: {exc}"
-            elif not model and now-last_ai >= max(.5, self.config.detection_interval_s):
+            elif not model and not self.config.yolo_model and now-last_ai >= max(.5, self.config.detection_interval_s):
                 last_ai = now
                 try:
                     h, w = frame.shape[:2]
@@ -214,6 +256,10 @@ class Video:
                     "fps": round(self.actual_fps, 1), "processing_ms": round(self.processing_ms, 1),
                     "inference_ms":round(self.inference_ms,1),"inference_frame_age_s":self.inference_frame_age_s,
                     "ai_status": self.ai_status, "ocr_status": self.ocr_status,
+                    "ai_details": self.ai_details.copy(),
+                    "ai_sequence": self.ai_sequence,
+                    "ai_result_age_s": time.monotonic() - self.ai_completed_at if self.ai_completed_at else None,
+                    "processed_video": bool(self.config.yolo_model) and self.config.video_source != 'demo',
                     "detections": self.detections if self.detection_at and time.monotonic()-self.detection_at < 1 else [],
                     "detection_sequence": self.detection_sequence, "osd": self.osd,
                     "source": str(self.config.video_source)}

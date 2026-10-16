@@ -1,8 +1,11 @@
 import asyncio
 import json
 import secrets
+import importlib.util
+from pathlib import Path
+import uuid
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, unquote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -15,6 +18,13 @@ from .control import parse_command, search_grid
 from .station import Station
 from typing import Literal
 from serial.tools import list_ports
+
+AI_MODELS = {'visdrone': ROOT / 'models/aura/yolov8m_visdrone_recovered.pt',
+             'nano': ROOT / 'models/aura/yolo26n.pt'}
+
+
+def ai_available():
+    return importlib.util.find_spec('ultralytics') is not None
 
 
 class Command(BaseModel):
@@ -75,6 +85,15 @@ def create_app(config=None, data_root=None):
 
     @asynccontextmanager
     async def lifespan(app):
+        if ai_available():
+            # Windows native imports can stall if first loaded inside the live video worker.
+            # Initialize optional dependencies once before starting capture threads.
+            try:
+                from .detection import prepare_runtime
+                prepare_runtime()
+            except Exception:
+                # A requested detector reports the detailed error through video.ai_status.
+                pass
         app.state.station = Station(config or Config.load(), data_root)
         app.state.station.start()
         yield
@@ -137,6 +156,71 @@ def create_app(config=None, data_root=None):
     @app.get("/api/status")
     def status():
         return station().state()
+
+    @app.get('/api/video/models')
+    def video_models():
+        installed = ai_available()
+        entries = [('visdrone', 'Aerial / VisDrone (more CPU)', 'yolov8m_visdrone_recovered.pt'),
+                   ('nano', 'Lightweight / YOLO26n (faster)', 'yolo26n.pt')]
+        return {'available': installed, 'models': [
+            {'id': key, 'name': label, 'ready': installed and AI_MODELS[key].is_file()}
+            for key, label, filename in entries], 'max_upload_mb': 500}
+
+    @app.post('/api/video/upload')
+    async def upload_video(request: Request, model: Literal['visdrone', 'nano'] = 'visdrone',
+                           enhancement: Literal['identity', 'clahe', 'fpv_hybrid'] = 'identity'):
+        s = station()
+        if s.config.mode != 'demo':
+            raise HTTPException(409, 'Video testing requires demo mode; live aircraft input cannot be replaced')
+        if s.recorder.snapshot()['active']:
+            raise HTTPException(409, 'Stop recording before loading a test video')
+        weights = AI_MODELS[model]
+        if not ai_available() or not weights.is_file():
+            raise HTTPException(409, 'AI assets missing. Install requirements-ai.txt and run scripts/setup_aura.py --model both')
+        filename = unquote(request.headers.get('x-filename', '')).replace('\\', '/').split('/')[-1]
+        suffix = Path(filename).suffix.lower()
+        if suffix not in {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'}:
+            raise HTTPException(422, 'Choose an MP4, MOV, AVI, MKV, WEBM or M4V video')
+        if request.headers.get('content-type') != 'application/octet-stream':
+            raise HTTPException(415, 'Expected a video file upload')
+        maximum = 500 * 1024 * 1024
+        try:
+            length = int(request.headers.get('content-length', '0'))
+        except ValueError:
+            raise HTTPException(400, 'Invalid upload size')
+        if length > maximum:
+            raise HTTPException(413, 'Video must be 500 MB or smaller')
+        directory = s.store.root / 'uploads'
+        directory.mkdir(exist_ok=True)
+        path = directory / (uuid.uuid4().hex + suffix)
+        accepted = False
+        try:
+            total = 0
+            with path.open('wb') as output:
+                async for chunk in request.stream():
+                    total += len(chunk)
+                    if total > maximum:
+                        raise HTTPException(413, 'Video must be 500 MB or smaller')
+                    output.write(chunk)
+            if not total:
+                raise HTTPException(422, 'Video is empty')
+            import cv2
+            probe = cv2.VideoCapture(str(path))
+            try:
+                ok, frame = probe.read()
+                if not ok or frame is None:
+                    raise HTTPException(422, 'Video cannot be decoded; try an H.264 MP4')
+            finally:
+                probe.release()
+            await asyncio.to_thread(s.review_video, path, weights, enhancement)
+            accepted = True
+            return {'loaded': True, 'name': filename, 'model': model, 'bytes': total,
+                    'flight_mode': 'demo', 'message': 'Real video detection; flight telemetry is simulated'}
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        finally:
+            if not accepted:
+                path.unlink(missing_ok=True)
 
     @app.post('/api/mission')
     def plan(body: MissionInput):
@@ -220,6 +304,21 @@ def create_app(config=None, data_root=None):
                     previous = seq
                 await asyncio.sleep(.015)
         return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    @app.get('/video/ai.mjpg')
+    async def ai_video(request: Request):
+        async def generate():
+            previous = None
+            while not await request.is_disconnected():
+                v = station().video
+                with v.lock:
+                    jpeg, sequence = v.ai_jpeg, v.ai_sequence
+                key = (id(v), sequence)
+                if jpeg and key != previous:
+                    yield b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' + str(len(jpeg)).encode() + b'\r\n\r\n' + jpeg + b'\r\n'
+                    previous = key
+                await asyncio.sleep(.02)
+        return StreamingResponse(generate(), media_type='multipart/x-mixed-replace; boundary=frame')
 
     @app.post("/api/command")
     def command(body: Command):

@@ -1,5 +1,6 @@
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from .config import ROOT
@@ -95,6 +96,29 @@ class Station:
             thread.start()
         self.thread.start()
         self.store.add("session", {"mode": self.config.mode, "video_source": self.config.video_source})
+
+    def review_video(self, source, model, enhancement='identity'):
+        """Replace observation input only in demo; never attach uploaded clips to a live aircraft."""
+        with self.lock:
+            if self.config.mode != 'demo':
+                raise ValueError('Video testing requires demo mode; live aircraft input cannot be replaced')
+            if self.recorder.snapshot()['active']:
+                raise ValueError('Stop recording before loading a test video')
+            self.enabled_until = self.command_until = 0
+            self.velocity = (0, 0, 0)
+            self.mission.pause('Video source changed; review before resuming')
+            self.video.close()
+            self.config = replace(self.config, video_source=str(source), yolo_model=str(model),
+                                  confidence_threshold=.25, video_loop=True,
+                                  detection_enhancement=enhancement, detection_mode='original',
+                                  detection_osd_profile='', live_control=False, live_missions=False)
+            self.video = Video(self.config)
+            self.recorder.video = self.video
+            self.intelligence = Intelligence()
+            for thread in self.video.threads:
+                thread.start()
+            self.store.add('video_review', {'source': Path(source).name, 'model': Path(model).name,
+                                           'enhancement': enhancement, 'flight': 'simulated'})
 
     def blockers(self):
         return control_blockers(self.config, self.telemetry.snapshot(),

@@ -1,0 +1,14 @@
+{
+  "mode": "demo",
+  "video_source": "data/aura/real_fpv_user_flight.mp4",
+  "video_loop": true,
+  "yolo_model": "models/aura/yolov8m_visdrone_recovered.pt",
+  "confidence_threshold": 0.25,
+  "detection_interval_s": 0.3,
+  "live_control": false,
+  "live_missions": false,
+  "detection_mode": "original",
+  "detection_enhancement": "identity",
+  "yolo_device": "cpu",
+  "yolo_precision": "fp32"
+}

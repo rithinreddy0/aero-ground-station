@@ -6,6 +6,38 @@ let toastTimer,settingsInitialised=false;
 function toast(message,error=false){$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6500)}
 async function request(path,body){const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-Station-Token':token},body:JSON.stringify(body)};const response=await fetch(path,options);const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));return data}
 const safe=fn=>async(...args)=>{try{await fn(...args)}catch(e){toast(e.message,true)}};
+let uploadInProgress=false,videoStream='raw',videoModelsLoaded=false,reviewFilename='';
+async function loadVideoModels(){
+ const info=await request('/api/video/models');
+ for(const option of $('test-video-model').options){const item=info.models.find(m=>m.id===option.value);option.disabled=!item?.ready;option.textContent=item?.name+(item?.ready?'':' — setup required')}
+ const ready=info.models.find(m=>m.ready);if(ready)$('test-video-model').value=ready.id;
+ if(!ready)$('video-upload-status').textContent='AI setup required: install requirements-ai.txt and run scripts/setup_aura.py --model both';
+ videoModelsLoaded=true;
+}
+$('video-upload-form').addEventListener('submit',safe(async e=>{
+ e.preventDefault();if(uploadInProgress)return;
+ if(state?.mode!=='demo')throw Error('Restart in demo mode before testing a recording');
+ const file=$('test-video-file').files[0];if(!file)throw Error('Choose a video first');
+ if(!file.size||file.size>500*1024*1024)throw Error('Choose a video between 1 byte and 500 MB');
+ uploadInProgress=true;$('video-upload-button').disabled=true;$('video-upload-progress').hidden=false;
+ $('video-upload-status').textContent='Uploading '+file.name+'…';
+ try{
+  const result=await new Promise((resolve,reject)=>{
+   const xhr=new XMLHttpRequest();
+   xhr.open('POST','/api/video/upload?model='+encodeURIComponent($('test-video-model').value)+'&enhancement='+encodeURIComponent($('test-video-enhancement').value));
+   xhr.setRequestHeader('Content-Type','application/octet-stream');xhr.setRequestHeader('X-Station-Token',token);
+   xhr.setRequestHeader('X-Filename',encodeURIComponent(file.name));
+   xhr.upload.onprogress=e=>{if(e.lengthComputable)$('video-upload-progress').value=100*e.loaded/e.total};
+   xhr.onload=()=>{let data;try{data=JSON.parse(xhr.responseText)}catch{reject(Error('Invalid upload response'));return}if(xhr.status>=200&&xhr.status<300)resolve(data);else reject(Error(typeof data.detail==='string'?data.detail:'Upload failed'))};
+   xhr.onerror=()=>reject(Error('Upload connection failed'));xhr.send(file);
+  });
+  reviewFilename=result.name;
+  $('video-upload-status').textContent=result.name+' loaded. Warming up detector; annotated playback will appear above.';
+  $('show-ai-video').checked=true;$('video').src='/video/ai.mjpg?review='+Date.now();videoStream='ai';
+  toast('Video loaded · real detections · simulated flight');
+ }catch(error){$('video-upload-status').textContent=error.message;throw error}
+ finally{uploadInProgress=false;$('video-upload-button').disabled=false;$('video-upload-progress').hidden=true}
+}));
 function pushHistory(){history.push(JSON.stringify(draft));history=history.slice(-30)}
 function canEdit(){if(state?.mission.status==='running'){toast('Pause the mission before changing its route',true);return false}return true}
 function defaults(p){return {...p,altitude_m:Number($('default-alt').value),hold_s:Number($('default-hold').value)}}
@@ -101,17 +133,25 @@ const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;$('voice')
 if(Speech)$('voice').addEventListener('click',()=>{const recognition=new Speech();recognition.lang='en-IN';recognition.onresult=e=>{$('command').value=e.results[0][0].transcript;toast('Review dictated command, then Send')};recognition.onerror=e=>toast('Speech unavailable: '+e.error,true);recognition.start()});
 function drawHorizon(t,demo){const c=$('horizon'),ctx=c.getContext('2d'),w=c.width,h=c.height;ctx.clearRect(0,0,w,h);if(!demo&&(t.ages_s.attitude??Infinity)>2.5){ctx.fillStyle='#8b9ba5';ctx.font='12px monospace';ctx.fillText('ATTITUDE UNAVAILABLE',w/2-80,h/2);return}ctx.save();ctx.translate(w/2,h/2);ctx.rotate(-(t.roll_deg||0)*Math.PI/180);const shift=(t.pitch_deg||0)*2;ctx.fillStyle='#2e687f';ctx.fillRect(-w,-h*2,w*2,h*2+shift);ctx.fillStyle='#665438';ctx.fillRect(-w,shift,w*2,h*2);ctx.strokeStyle='#d7e3e8';ctx.beginPath();ctx.moveTo(-w,shift);ctx.lineTo(w,shift);ctx.stroke();ctx.font='9px monospace';ctx.fillStyle='#e2e5dd';[-20,-10,10,20].forEach(angle=>{const y=shift-angle*2;ctx.beginPath();ctx.moveTo(-25,y);ctx.lineTo(25,y);ctx.stroke();ctx.fillText(angle,30,y+3)});ctx.restore();ctx.strokeStyle='#e3ef76';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(w/2-40,h/2);ctx.lineTo(w/2-10,h/2);ctx.lineTo(w/2,h/2+6);ctx.lineTo(w/2+10,h/2);ctx.lineTo(w/2+40,h/2);ctx.stroke();ctx.fillStyle='#152026dd';ctx.fillRect(w/2-30,0,60,20);ctx.fillStyle='#e7f1e7';ctx.font='10px monospace';ctx.fillText(fmt(t.heading_deg,0)+'°',w/2-15,14)}
 function render(s){
- state=s;online=true;const t=s.telemetry,v=s.video,m=s.mission,demo=s.mode==='demo',posFresh=(t.ages_s.position??Infinity)<2.5,batFresh=(t.ages_s.battery??Infinity)<2.5;
+ state=s;online=true;const t=s.telemetry,v=s.video,m=s.mission,demo=s.mode==='demo',synthetic=v.source==='demo',posFresh=(t.ages_s.position??Infinity)<2.5,batFresh=(t.ages_s.battery??Infinity)<2.5;
+ if(!videoModelsLoaded){videoModelsLoaded=true;loadVideoModels().catch(e=>{$('video-upload-status').textContent=e.message})}
+ $('video-upload-button').disabled=uploadInProgress||!demo;
+ const targetStream=v.processed_video&&$('show-ai-video').checked?'ai':'raw';
+ if(targetStream!==videoStream){$('video').src=targetStream==='ai'?'/video/ai.mjpg':'/video.mjpg';videoStream=targetStream}
+ $('overlay').hidden=targetStream==='ai';
+ $('video-ai-timing').textContent=v.processed_video?('AI: '+v.ai_status+' · '+fmt(v.inference_ms,0)+' ms per result · result age '+fmt(v.ai_result_age_s,1)+' s'):'';
+ if(v.ai_sequence&&reviewFilename&&!uploadInProgress)$('video-upload-status').textContent=reviewFilename+' · detection active · looping playback';
  if(!settingsInitialised){settingsInitialised=true;$('ai-policy').value=s.intelligence.policy;if(s.simulation){$('sim-person').checked=s.simulation.person_visible;$('sim-gps').checked=s.simulation.gps_loss;$('sim-video').checked=s.simulation.video_loss;$('sim-battery').value=s.simulation.battery_percent;$('sim-rate').value=s.simulation.time_scale}}
  $('connection').textContent='Station online';$('mode').textContent=demo?'SIMULATION':'LIVE';$('connection-dot').style.background='var(--lime)';
  $('session-label').textContent=demo?'SIMULATED AIRCRAFT · NO RF OUTPUT':'LIVE AIRCRAFT · GUIDED SUPERVISION';
- $('session-message').textContent=demo?'Generated video / telemetry · hardware integration pending':s.mission_blockers.length?'Observation: '+s.mission_blockers[0]:'Flight prerequisites met · pilot retains takeover';
+ $('session-message').textContent=demo?(synthetic?'Generated video / telemetry · hardware integration pending':'Real video / AI · simulated flight telemetry · no RF output'):s.mission_blockers.length?'Observation: '+s.mission_blockers[0]:'Flight prerequisites met · pilot retains takeover';
  $('altitude').textContent=posFresh?fmt(t.altitude_m):'—';$('speed').textContent=posFresh?fmt(t.speed_mps):'—';
  $('battery').textContent=batFresh&&t.battery_percent!==null?t.battery_percent+'%':'—';$('voltage').textContent=(batFresh?fmt(t.voltage_v):'—')+' V';
  $('sats').textContent=(t.ages_s.gps??Infinity)<2.5?t.satellites??'—':'—';$('gps').textContent=t.fix_type>=3?'3D fix':'No 3D fix';
  $('flight-mode').textContent=t.mode;$('armed').textContent=t.armed?'ARMED':'DISARMED';$('temperature').textContent=(demo||(t.ages_s.temperature??Infinity)<2.5)?fmt(t.temperature_c,0)+'°C barometer':'Temperature —';$('telemetry-status').textContent=t.status;
  const frameFresh=v.age_s!==null&&v.age_s<1;$('fps').textContent=(frameFresh?fmt(v.fps):'—')+' FPS';$('frame-age').textContent=fmt(v.age_s===null?null:v.age_s*1000,0)+' ms age';$('encode').textContent=fmt(v.processing_ms,0)+' ms encode';
- $('video-source').textContent=demo?'SIMULATED':'USB / FILE';$('video-badge').textContent=!frameFresh?'VIDEO STALE':demo?'SIMULATED VIDEO':'CAPTURE ACTIVE';
+ $('video-source').textContent=synthetic?'SIMULATED':'USB / FILE';$('video-badge').textContent=!frameFresh?'VIDEO STALE':synthetic?'SIMULATED VIDEO':'CAPTURE ACTIVE';
+ if(targetStream==='ai')$('video-badge').textContent=v.ai_sequence?(v.ai_result_age_s>3?'AI RESULT OLD':'AI DETECTION'):'AI WARMING UP';
  $('action').textContent=m.status==='paused'?'Paused · '+m.reason:s.action;$('blockers').textContent=s.control_blockers.join(' · ');
  document.querySelectorAll('[data-command]').forEach(b=>b.disabled=!demo&&s.control_blockers.length>0);
  if(!s.lease_active&&!demo)$('lease').checked=false;
@@ -121,13 +161,14 @@ function render(s){
  if(m.status!==lastMissionStatus){lastMissionStatus=m.status;updateRows()}
  if(m.revision!==lastRevision){lastRevision=m.revision;if(!dirty){draft=structuredClone(m.points);if(m.points.length)$('mission-name').value=m.name;updateRows();map.points=draft}}
  $('ai-decision').textContent=s.intelligence.decision;$('track-count').textContent=s.intelligence.tracks.length+' image tracks · '+s.intelligence.confirmed_count+' persistent candidates';
- $('ai-status').textContent=v.ai_status;$('detections').textContent=v.detections.map(d=>d.label+' '+(d.confidence===null?d.detector:Math.round(d.confidence*100)+'%')).join(' · ');
+ const ai=v.ai_details||{};
+ $('ai-status').textContent=v.ai_status+(ai.model?' · '+ai.enhancement+' · '+ai.filter_mode+' · '+ai.excluded_count+' excluded':'');$('detections').textContent=v.detections.map(d=>(d.source_label||d.label)+' '+(d.confidence===null?d.detector:Math.round(d.confidence*100)+'%')).join(' · ');
  $('osd').textContent=v.osd.length?v.osd.map(r=>r.name+': '+r.text).join(' · '):v.ocr_status;$('accept-recommendation').disabled=!demo&&s.control_blockers.length>0;
  const rec=s.recording;$('record-status').textContent=rec.status;$('record-start').disabled=rec.active||!frameFresh;$('record-stop').disabled=!rec.active;$('record-download').hidden=rec.active||!rec.filename;if(rec.filename)$('record-download').href='/recordings/'+encodeURIComponent(rec.filename);
  map.home=s.home;map.fence=s.limits.radius_m;map.path=s.path;if(t.latitude!==null){map.aircraft={latitude:t.latitude,longitude:t.longitude,heading_deg:t.heading_deg,stale:!posFresh};if(!map.initialised){map.centre={...map.aircraft};map.initialised=true}}map.schedule();
  $('map-coordinate').textContent=posFresh?fmt(t.latitude,6)+' / '+fmt(t.longitude,6):'GPS stale / missing';$('footer-coordinates').textContent='LAT '+fmt(t.latitude,6)+' · LON '+fmt(t.longitude,6);$('footer-limits').textContent=s.limits.radius_m+' m fence · '+s.limits.altitude_m+' m ceiling · '+s.limits.speed_mps+' m/s';
- drawHorizon(t,demo);const canvas=$('overlay'),ctx=canvas.getContext('2d');canvas.width=960;canvas.height=540;ctx.strokeStyle='#c1e66c';ctx.fillStyle='#c1e66c';ctx.lineWidth=3;ctx.font='18px monospace';v.detections.forEach(d=>{const [x,y,x2,y2]=d.box;ctx.strokeRect(x*960,y*540,(x2-x)*960,(y2-y)*540);ctx.fillText(d.label+(demo?' / SIM':'')+' f'+v.detection_sequence,x*960,Math.max(20,y*540-8))});
- $('perf-fps').textContent=fmt(v.fps)+' fps';$('perf-encode').textContent=fmt(v.processing_ms,0)+' ms';$('perf-inference').textContent=demo?'SIM':fmt(v.inference_ms,0)+' ms';$('perf-age').textContent=fmt(v.age_s===null?null:v.age_s*1000,0)+' ms';$('simulation-controls').querySelectorAll('input,select,button').forEach(el=>el.disabled=!demo);
+ drawHorizon(t,demo);const canvas=$('overlay'),ctx=canvas.getContext('2d');canvas.width=960;canvas.height=540;ctx.strokeStyle='#c1e66c';ctx.fillStyle='#c1e66c';ctx.lineWidth=3;ctx.font='18px monospace';v.detections.forEach(d=>{const [x,y,x2,y2]=d.box;ctx.strokeRect(x*960,y*540,(x2-x)*960,(y2-y)*540);ctx.fillText((d.source_label||d.label)+(synthetic?' / SIM':'')+' f'+v.detection_sequence,x*960,Math.max(20,y*540-8))});
+ $('perf-fps').textContent=fmt(v.fps)+' fps';$('perf-encode').textContent=fmt(v.processing_ms,0)+' ms';$('perf-inference').textContent=synthetic?'SIM':fmt(v.inference_ms,0)+' ms';$('perf-age').textContent=fmt(v.age_s===null?null:v.age_s*1000,0)+' ms';$('simulation-controls').querySelectorAll('input,select,button').forEach(el=>el.disabled=!demo);
  document.querySelectorAll('#waypoint-rows tr').forEach((row,i)=>row.classList.toggle('current',m.status==='running'&&m.index===i));
  if(Date.now()-lastEventRefresh>3000){lastEventRefresh=Date.now();refreshEvents()}
 }

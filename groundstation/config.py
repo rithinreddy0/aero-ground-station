@@ -28,6 +28,14 @@ class Config:
     home_latitude: float = 17.385
     home_longitude: float = 78.4867
     yolo_model: str = ""
+    yolo_device: str = "cpu"
+    yolo_precision: str = "fp32"
+    yolo_imgsz: int = 640
+    yolo_iou: float = 0.7
+    detection_enhancement: str = "identity"
+    detection_mode: str = "original"
+    detection_osd_profile: str = ""
+    video_loop: bool = False
     detection_interval_s: float = 0.3
     confidence_threshold: float = 0.5
     ocr_interval_s: float = 1.0
@@ -35,6 +43,23 @@ class Config:
     osd_regions: list = field(default_factory=list)
 
     def __post_init__(self):
+        import re
+        if self.yolo_device not in ('auto', 'cpu', 'cuda') and not re.fullmatch(r'cuda:\d+', self.yolo_device):
+            raise ValueError('YOLO device must be auto, cpu, cuda, or cuda:N')
+        if self.yolo_precision not in ('auto', 'fp32'):
+            raise ValueError('YOLO precision must be auto or fp32')
+        if type(self.yolo_imgsz) is not int or not 160 <= self.yolo_imgsz <= 1280 or self.yolo_imgsz % 32:
+            raise ValueError('YOLO image size must be a multiple of 32 between 160 and 1280')
+        if not math.isfinite(self.yolo_iou) or not 0 < self.yolo_iou <= 1:
+            raise ValueError('Invalid YOLO IoU threshold')
+        if self.detection_enhancement not in ('identity', 'clahe', 'fpv_hybrid'):
+            raise ValueError('Unsupported detection enhancement')
+        if self.detection_mode not in ('original', 'exclude25', 'exclude50'):
+            raise ValueError('Unsupported detection mode')
+        if self.detection_mode != 'original' and not self.detection_osd_profile:
+            raise ValueError('OSD exclusion requires a calibrated detection_osd_profile')
+        if type(self.video_loop) is not bool:
+            raise ValueError('video_loop must be boolean')
         if not all(math.isfinite(v) for v in (self.home_latitude,self.home_longitude,self.max_speed_mps,self.max_altitude_m,self.geofence_radius_m)):
             raise ValueError('Navigation configuration must be finite')
         if not -85<=self.home_latitude<=85 or not -180<=self.home_longitude<=180:

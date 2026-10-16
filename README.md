@@ -74,6 +74,15 @@ The API binds to loopback only. Same-origin and random per-process write-token c
 
 ## AI / OSD upgrades
 
+### Team AURA detector and video upload
+
+The team's aerial detector is integrated into this application. See
+[AURA setup and video testing](docs/AURA_INTEGRATION.md) for dependency installation
+and the hash-verified model downloader. In demo mode, **Test AI on your video** in
+the left sidebar accepts a local video and plays frame-matched annotated detections.
+Choose the VisDrone aerial model or the lightweight model. Uploaded-video testing
+keeps flight telemetry simulated and sends no RF commands.
+
 The default HOG detector requires no extra download, but is a baseline for upright nearby people; aerial FPV angles, small objects, blur and OSD overlays are challenging. Validate real footage and choose an appropriate trained model before treating detections as useful rescue leads.
 
 For optional YOLO and OCR:
