@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+data/
+models/
+.env
+.env.*
+!.env.example
+config.json
+*.log
+firmware/
+software-engineering-interview-handbook.pdf
