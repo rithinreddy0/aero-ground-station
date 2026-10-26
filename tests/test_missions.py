@@ -1,7 +1,6 @@
 import math
 import time
 from unittest.mock import Mock
-
 import pytest
 from fastapi.testclient import TestClient
 from groundstation.config import Config

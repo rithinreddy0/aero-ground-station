@@ -1,0 +1,6 @@
+flowchart LR
+ Pilot["Actor: Pilot"] --> Fly([Fly and select flight mode])
+ Pilot --> Takeover([Take manual control])
+ Operator["Actor: Rescue operator"] --> View([View video and telemetry])
+ Operator --> Plan([Review and run bounded route])
+ Operator --> Incident([Verify and record rescue lead])

@@ -1,0 +1,14 @@
+sequenceDiagram
+ actor O as Operator
+ participant API as FastAPI
+ participant V as Video + YoloDetector
+ participant I as Intelligence
+ O->>API: POST /api/video/upload
+ API->>API: Authenticate; require demo; validate video
+ API->>V: Load source, model and enhancement
+ loop Newest available frame
+ V->>V: Decode + optional enhancement + YOLO
+ V->>I: Normalized timestamped detections
+ V-->>O: Frame-matched annotated MJPEG
+ I-->>O: Persistent candidate evidence
+ end

@@ -1,0 +1,12 @@
+flowchart TD
+ A([Start]) --> B[Draft search route]
+ B --> C[Validate points and review obstacles]
+ C --> D{All control gates pass?}
+ D -->|No| P[Reject or pause]
+ D -->|Yes| R[Stream bounded velocity setpoints]
+ R --> F{Fault, person policy or pilot mode change?}
+ F -->|Yes| P
+ F -->|No| E{Final point reached?}
+ E -->|No| R
+ E -->|Yes| Z([Complete])
+ P --> H[Human review and explicit resume]

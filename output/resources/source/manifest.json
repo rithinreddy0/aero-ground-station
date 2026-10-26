@@ -1,0 +1,98 @@
+{
+  "date": "2026-10-26",
+  "pdf_pages": 40,
+  "slides": 38,
+  "diagrams": 13,
+  "files": [
+    {
+      "path": "Aero_Hardware_Implementation_Manual.pdf",
+      "bytes": 177442,
+      "sha256": "63faf36901c32661a514b8d900e6f49554f71521c20b9eb1bb6d6298e78d36aa"
+    },
+    {
+      "path": "Aero_Hardware_Implementation_Source.md",
+      "bytes": 51159,
+      "sha256": "5291714617943e62fe801734fd45fe79c41ee057e561a8640a49ad4fbea1d8cc"
+    },
+    {
+      "path": "Aero_System_Architecture_Presentation.pptx",
+      "bytes": 213135,
+      "sha256": "59e8f2fff00d4170179d868ebdc1f6ffe4950b3becb53612c3e0241c91bc4f93"
+    },
+    {
+      "path": "editable-diagrams/activity.mmd",
+      "bytes": 407,
+      "sha256": "dc45f377aa22d0f5c303c67e82f42dd40c2205014bd879be3400db4f4ee431b6"
+    },
+    {
+      "path": "editable-diagrams/architecture.mmd",
+      "bytes": 420,
+      "sha256": "f30991e8169eae51f749e5e8563ec502f2506b2fc1cc142155734a23542cd5ee"
+    },
+    {
+      "path": "editable-diagrams/classes.mmd",
+      "bytes": 385,
+      "sha256": "c6882b105d63e658dc858e9600db18ee8eb12a917a0d68e29563e85537cef42b"
+    },
+    {
+      "path": "editable-diagrams/command_seq.mmd",
+      "bytes": 497,
+      "sha256": "eed9bd50e5021033c259e2fea1f774d95f8b4cecc414777be777c577c5145b58"
+    },
+    {
+      "path": "editable-diagrams/components.mmd",
+      "bytes": 357,
+      "sha256": "a5b9f368d862b8db2e6cbdc1246fcc83c9622f49c4f8c03f349792103948fd56"
+    },
+    {
+      "path": "editable-diagrams/data.mmd",
+      "bytes": 277,
+      "sha256": "0f51eba4897edebed4aa6f42cee2711d23e9f45c3fbf9edd8945c001293acb19"
+    },
+    {
+      "path": "editable-diagrams/deployment.mmd",
+      "bytes": 406,
+      "sha256": "6c8b577bba4b4cf9c3fe8ca385fd5c8dc9ab639388d9f7552a36fe59c189b090"
+    },
+    {
+      "path": "editable-diagrams/motors.mmd",
+      "bytes": 252,
+      "sha256": "8dffd885a35d14be6a6100c4267fb68fa858a71ee4c5096f9b78bb2a8bf7bbb9"
+    },
+    {
+      "path": "editable-diagrams/state.mmd",
+      "bytes": 372,
+      "sha256": "3e045ee5f7898d7459948c335f8680e727daf04cdeff7c6ee4d71d2436162b44"
+    },
+    {
+      "path": "editable-diagrams/telemetry_seq.mmd",
+      "bytes": 367,
+      "sha256": "4da4144cfc591b07e729240674363402f1cd8a7d0294d3d57839198d25391a78"
+    },
+    {
+      "path": "editable-diagrams/usecase.mmd",
+      "bytes": 303,
+      "sha256": "4cc5aa66676613e24b35411ad8137e471a694035b5007881400c71e547f65e4e"
+    },
+    {
+      "path": "editable-diagrams/video_seq.mmd",
+      "bytes": 481,
+      "sha256": "2420543811c3dfdce5736303e2405be7ab71cb08c922432800130bd551ab5af2"
+    },
+    {
+      "path": "editable-diagrams/wiring.mmd",
+      "bytes": 307,
+      "sha256": "dec345f308f1c01f406815976d4608852c1f5c93becd7498aa14167ffa96bc0e"
+    },
+    {
+      "path": "source/project_content.json",
+      "bytes": 85503,
+      "sha256": "4a2ec3e80d5acf880b385cdbf02468f246a9d81b43a2a1f04f379a7879178e30"
+    },
+    {
+      "path": "START_HERE.md",
+      "bytes": 2365,
+      "sha256": "30ef67f93fe5face900b98029c3ed6db93a2ad234f0927b01dbf3f3d92e78ac2"
+    }
+  ]
+}

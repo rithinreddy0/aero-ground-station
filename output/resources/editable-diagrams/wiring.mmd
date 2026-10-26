@@ -1,0 +1,8 @@
+flowchart TB
+ GPS[GM10 GPS TX] -->|UART5| R5[AIO R5]
+ T5[AIO T5] --> GPSRX[GM10 GPS RX]
+ Compass[External compass if present] <-->|SDA + SCL| FC[AIO]
+ ELRSTX[ELRS receiver TX] --> R6[AIO R6]
+ T6[AIO T6] --> ELRSRX[ELRS receiver RX]
+ FC -->|DShot600| ESC[Integrated ESC]
+ ESC --> Motors[Four motors]

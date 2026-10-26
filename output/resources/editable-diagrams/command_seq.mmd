@@ -1,0 +1,16 @@
+sequenceDiagram
+ participant P as Pilot / browser
+ participant S as Station
+ participant L as MAVLink link
+ participant F as ArduCopter
+ P->>F: Select GUIDED after safe manual hover
+ P->>S: Enable lease and request bounded movement
+ S->>S: Validate flight state, freshness and envelope
+ alt Gate fails
+ S-->>P: Reject / pause
+ else Allowed
+ S->>L: BODY_NED velocity setpoint
+ L->>F: SET_POSITION_TARGET_LOCAL_NED
+ F-->>L: Telemetry feedback
+ L-->>S: Updated position and mode
+ end

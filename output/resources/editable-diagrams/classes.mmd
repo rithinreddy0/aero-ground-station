@@ -1,0 +1,22 @@
+classDiagram
+ Station *-- Video
+ Station *-- Telemetry
+ Station *-- Mission
+ Station *-- Intelligence
+ Station *-- Store
+ Station *-- Recorder
+ Video --> YoloDetector
+ Station --> Config
+ class Station {
+ +state()
+ +loop()
+ +review_video()
+ }
+ class Telemetry {
+ +accept(message)
+ +send_velocity(vx,vy,vz)
+ }
+ class Intelligence {
+ +update(video)
+ +snapshot()
+ }

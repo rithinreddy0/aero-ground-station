@@ -1,0 +1,9 @@
+flowchart TB
+ UI[Browser UI] <-->|HTTP + SSE + MJPEG| API[FastAPI]
+ API --> Station[Station coordinator]
+ Station --> Video[Video + YOLO adapter]
+ Station --> Mission[Mission navigator]
+ Station --> Telemetry[Telemetry / pymavlink]
+ Station --> Store[SQLite Store]
+ Video --> Intelligence[Temporal person tracker]
+ Video --> Recorder[AVI recorder]

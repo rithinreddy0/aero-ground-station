@@ -1,0 +1,15 @@
+flowchart TB
+ subgraph Aircraft
+ AIO["<<device>> AIO
+<<executionEnvironment>> ArduCopter"]
+ GNSS[GNSS + optional external compass]
+ end
+ subgraph Ground
+ TX[ELRS transmitter module]
+ PC["<<device>> Windows laptop
+Mission Planner OR custom FastAPI GCS"]
+ end
+ GNSS --> AIO
+ TX <-->|RF + aircraft receiver| AIO
+ PC <-->|Backpack UDP or supported TX USB| TX
+ PC -.->|USB setup alternative| AIO

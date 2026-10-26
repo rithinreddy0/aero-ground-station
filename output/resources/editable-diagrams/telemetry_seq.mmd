@@ -1,0 +1,10 @@
+sequenceDiagram
+ participant FC as ArduCopter
+ participant RF as ELRS + bridge
+ participant GCS as Telemetry adapter
+ participant UI as Browser
+ FC->>RF: HEARTBEAT / position / GPS / battery / EKF
+ RF->>GCS: MAVLink over UDP or serial
+ GCS->>GCS: Check source IDs and update timestamps
+ GCS-->>UI: SSE /api/stream
+ UI->>UI: Show freshness and flight status

@@ -1,0 +1,10 @@
+stateDiagram-v2
+ [*] --> empty
+ empty --> ready: validate/load
+ ready --> running: start and gates pass
+ running --> paused: fault / operator / person policy
+ paused --> running: explicit resume and gates pass
+ paused --> ready: edit and revalidate
+ running --> completed: last waypoint and hold done
+ running --> cancelled: cancel
+ paused --> cancelled: cancel

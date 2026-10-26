@@ -1,0 +1,2021 @@
+{
+  "title": "Aero Ground Station",
+  "subtitle": "Hardware implementation, communication and system architecture",
+  "date": "26 October 2026",
+  "sections": [
+    {
+      "title": "Project purpose and system boundary",
+      "summary": "A supervised observation and rescue-review prototype",
+      "paragraphs": [
+        "Aero Ground Station combines a small ArduCopter aircraft, an ELRS radio link, an independent analog FPV video link and a Windows laptop. The laptop displays telemetry and video, assists search planning, runs person detection and records candidate rescue incidents. The flight controller remains responsible for stabilization and onboard protective behavior.",
+        "The project is intended to assist a trained pilot and a rescue operator. A detector box means a possible person in an image; it does not confirm a survivor, identity, medical condition or exact ground coordinates. A reviewed search route is a request for bounded movement, not evidence that the airspace or terrain is clear.",
+        "This pack documents the current application and the hardware discussed during commissioning. It is a technical explanation and implementation record, not a declaration that the aircraft is flight-ready. It includes architecture, interface contracts, UML views, parameter provenance and remaining acceptance work."
+      ],
+      "bullets": [
+        "Onboard: sensing, estimation, motor control and flight failsafes.",
+        "On the laptop: interface, AI, route feedback, event storage and review.",
+        "Human authority: takeoff, landing, mode selection, takeover and evidence verification."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S11",
+        "S12"
+      ],
+      "callout": "Documentation date: 26 October 2026. Hardware confirmations are historical observations from this project conversation."
+    },
+    {
+      "title": "Evidence and current implementation status",
+      "summary": "Separate confirmed behavior, implemented software and unresolved integration",
+      "paragraphs": [
+        "Mission Planner screenshots identified ArduCopter 4.7.1 on SpeedyBeeF405AIO and Mission Planner 1.3.83. The user reported a 4S 650 mAh battery, 3-inch props, a GM10 Mini V3 GPS and iFlight analog goggles. The exact ELRS receiver, transmitter-module firmware, camera, VTX and motor KV remain unrecorded.",
+        "The user confirmed radio channels, mode changes, corrected motor order and rotation, and disarmed radio-failsafe detection/recovery. Those are useful bench observations. They do not prove stable flight, correct GPS navigation, an obstacle-safe RTL path or airborne failsafe recovery.",
+        "The last recorded software validation on 16 October reported 46 passing tests and actual VisDrone inference on team footage. GPS remained unresolved in the conversation. The analog receiver/capture options were investigated, but purchase and live capture were not confirmed."
+      ],
+      "bullets": [],
+      "table": [
+        [
+          "Evidence level",
+          "Examples"
+        ],
+        [
+          "User-confirmed bench",
+          "Mode switches, motor order/direction, RC-loss message"
+        ],
+        [
+          "Software verified",
+          "Upload, decode, AI adapter, policy tests, local playback"
+        ],
+        [
+          "Unresolved",
+          "GPS fix/heading, current sensing, RF command/latency tests"
+        ],
+        [
+          "Proposed only",
+          "RC805/EasyCAP purchase, speaker and sensor additions"
+        ]
+      ],
+      "diagram": null,
+      "sources": [
+        "S11",
+        "S12"
+      ],
+      "callout": "Treat the saved parameter patches as commissioning history. A fresh FC export is needed to prove the present onboard values."
+    },
+    {
+      "title": "Hardware component inventory",
+      "summary": "Known parts, roles and missing identifiers",
+      "paragraphs": [
+        "The AIO is both a flight-control board and an integrated ESC assembly; it is not the same thing as the entire aircraft. The frame, motors, propellers, power wiring, receiver, navigation sensor and video system complete the aircraft. Each component needs a recorded model, supply requirement, mounting orientation and connection.",
+        "Keep a photographed bill of materials with serial numbers where useful. Do not substitute a component solely because its connector fits. Matching protocol, voltage, pinout, frequency and mechanical clearance matters more than a shared product category."
+      ],
+      "bullets": [],
+      "table": [
+        [
+          "Component",
+          "Project record / role"
+        ],
+        [
+          "Flight controller / ESC",
+          "SpeedyBee F405 AIO V1; ArduCopter + four motor outputs"
+        ],
+        [
+          "Propulsion / battery",
+          "3-inch props; 4S 650 mAh 95C; motor KV unconfirmed"
+        ],
+        [
+          "Navigation",
+          "Flywoo GM10 Mini V3; UART5; compass variant to confirm"
+        ],
+        [
+          "RC / telemetry",
+          "ELRS aircraft RX + TX module; RadioMaster Pocket reported in notes"
+        ],
+        [
+          "FPV observation",
+          "Analog camera/VTX + iFlight goggles; exact models unknown"
+        ],
+        [
+          "Ground computer",
+          "Windows laptop; Mission Planner + local Python application"
+        ],
+        [
+          "Video-to-USB hardware",
+          "UVC receiver OR analog VRX plus capture; not confirmed purchased"
+        ]
+      ],
+      "diagram": null,
+      "sources": [
+        "S01",
+        "S03",
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "AIO and ArduPilot responsibilities",
+      "summary": "The autopilot firmware lives on the flight controller",
+      "paragraphs": [
+        "ArduPilot is the autopilot software family. ArduCopter is its multirotor firmware, installed on the AIO. It reads inertial/navigation sensors, estimates attitude and position, interprets flight modes and produces motor commands. Integrated ESCs translate those commands into the switching currents that drive brushless motors.",
+        "Mission Planner is a ground application used to configure, inspect and command ArduPilot. It is not firmware inside the radio and is not a compulsory forwarding process between our app and the aircraft. Our application can communicate directly with the same autopilot through its own MAVLink adapter.",
+        "The SpeedyBee board support page is the reference for the ArduPilot target and board-specific mappings. The AIO has no built-in compass; an external device, if present, must be identified separately. Firmware limitations on an F405 target mean an optional ArduPilot feature should be checked before designing around it."
+      ],
+      "bullets": [
+        "AIO hardware provides computing, sensor interfaces and ESC connections.",
+        "ArduCopter provides flight behavior; ELRS transports control and data.",
+        "The laptop never substitutes for the onboard attitude controller."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S01",
+        "S17"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Power, propulsion and energy flow",
+      "summary": "Separate battery power, regulated electronics power and motor signals",
+      "paragraphs": [
+        "The 4S pack supplies the aircraft power input. Its nominal voltage is 14.8 V and standard full-charge voltage is 16.8 V. The recorded 650 mAh capacity corresponds to 9.62 Wh nominal energy (14.8 x 0.65), not a prediction of usable flight energy or endurance. The 95C label is not a measured system current limit.",
+        "The ESC power stage drives the four motors. Regulated rails power flight electronics and suitable peripherals. A UART is a data interface and does not define a peripheral supply voltage. Check the board/manual and the exact receiver or camera before using a power pad.",
+        "Battery monitoring has three different roles: measuring voltage/current, estimating consumed capacity and triggering protective actions. USB-only bench power does not provide a valid flight-pack voltage. A plausible voltage display still needs comparison with a charger or meter; percentage estimates depend on capacity/current calibration."
+      ],
+      "bullets": [
+        "No endurance claim is justified until mass, hover current and usable capacity are measured.",
+        "Do not power a 12 V-only RC805 directly from a 4S pack.",
+        "Disconnect power before changing motor wires; keep props removed for setup."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S17",
+        "S07"
+      ],
+      "callout": "Historical thresholds: low 14.4 V, critical 14.0 V and arming minimum 14.7 V. These were initial project choices, not universally valid battery specifications."
+    },
+    {
+      "title": "GPS and compass integration",
+      "summary": "UART position data and I2C heading data are separate interfaces",
+      "paragraphs": [
+        "The user identified the GPS as GM10 Mini V3 and confirmed connection to UART5. The intended data wiring is GPS TX to AIO R5 and GPS RX to AIO T5, plus correct power and common ground. The project changed SERIAL5_BAUD from 57 to 115 (115200 baud); SERIAL5_PROTOCOL=5, GPS1_TYPE=1 and GPS_AUTO_CONFIG=1 already matched.",
+        "The module LED colors alone did not establish a valid fix. A useful diagnosis needs fresh GPS_RAW_INT, fix type, satellite count and dilution/accuracy information. A stationary open-sky test, antenna orientation, stable supply, serial communication and RF interference should be investigated systematically rather than changing several parameters at once.",
+        "A compass, if included in the module variant, uses separate SDA/SCL connections. The historical parameter export detected an external compass, but this does not establish that it is part of this exact GM10 or that its mounting orientation is correct. Verify level headings in known directions. Do not apply a printed rotation label blindly."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S03",
+        "S01",
+        "S10"
+      ],
+      "callout": "GPS fix was still unresolved at the end of hardware troubleshooting. Do not represent Loiter, RTL, GUIDED navigation or fence readiness as demonstrated."
+    },
+    {
+      "title": "End-to-end system architecture",
+      "summary": "RC, MAVLink telemetry and video use different paths",
+      "paragraphs": [
+        "Read the three paths independently. Manual inputs originate at the pilot handset and arrive at ArduCopter through the ELRS aircraft receiver. MAVLink carries aircraft state in the opposite direction and carries supervised laptop requests toward the FC. Analog video originates in the FPV camera/VTX and needs its own compatible video receiver.",
+        "The radio and laptop bridge are ground equipment. The aircraft receiver is not the same component as the 5.8 GHz FPV receiver. The RF band and packet configuration of the installed ELRS hardware must be documented; do not assume they match the video link."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "architecture",
+      "sources": [
+        "S02",
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "ELRS link and laptop bridging",
+      "summary": "Native MAVLink is different from ordinary CRSF telemetry",
+      "paragraphs": [
+        "ExpressLRS is the RF control/data link between a compatible transmitter module and aircraft receiver. This project uses the native MAVLink path, which supports RC plus bidirectional telemetry with compatible hardware/firmware. Conventional CRSF telemetry on the handset is not automatically a laptop MAVLink connection.",
+        "For this AIO the project uses UART6 for the receiver, with SERIAL6_PROTOCOL=2 and SERIAL6_BAUD=460. Receiver TX connects to R6 and receiver RX to T6. The chosen stream rates and radio settings must fit the actual RF throughput. RSSI_TYPE=5 is the native-MAVLink configuration used here.",
+        "On the ground, a compatible TX Backpack can forward MAVLink over Wi-Fi, commonly to a UDP GCS endpoint. A supported external TX module may expose serial MAVLink over its own USB. The handset USB joystick socket is a different interface. The actual bridge used by this build remains to be recorded, so both supported alternatives are shown rather than claiming a specific one was verified."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S02"
+      ],
+      "callout": "Recorded application endpoint: udpin:0.0.0.0:14550. This is a configured receive address, not proof of a working wireless link."
+    },
+    {
+      "title": "Wiring and interface register",
+      "summary": "Record electrical connections separately from logical software links",
+      "paragraphs": [
+        "Use pad labels from the exact AIO revision. TX/RX are crossed between devices because a transmitter output must feed the other device receiver input. Ground reference is required. Connector color order is not a substitute for labelled continuity checks.",
+        "The diagram deliberately does not claim a connector pin order. Consult the board and peripheral manuals before soldering. Keep antennas and sensitive GNSS/compass wiring clear of avoidable motor-current and RF interference sources, then verify behavior after final assembly."
+      ],
+      "bullets": [],
+      "table": [
+        [
+          "Connection",
+          "Interface / intended direction"
+        ],
+        [
+          "GPS TX / RX",
+          "TX -> R5; RX <- T5; UART5 GPS"
+        ],
+        [
+          "ELRS receiver TX / RX",
+          "TX -> R6; RX <- T6; UART6 native MAVLink"
+        ],
+        [
+          "External compass if fitted",
+          "SDA <-> SDA; SCL <-> SCL; I2C + correct supply"
+        ],
+        [
+          "Laptop service connection",
+          "USB -> FC SERIAL0 MAVLink2; COM number is machine-specific"
+        ],
+        [
+          "FC to integrated ESCs",
+          "DShot600; outputs 1-4 with project remapping"
+        ],
+        [
+          "Camera / OSD / VTX",
+          "Analog video through appropriate board pads; supply separately verified"
+        ]
+      ],
+      "diagram": null,
+      "sources": [
+        "S01",
+        "S17",
+        "S02"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Aircraft interface diagram",
+      "summary": "Physical interfaces around the AIO",
+      "paragraphs": [
+        "The flight controller receives navigation and RC information while independently commanding propulsion. A power rail can be shared only within its verified rating; the data connectors do not imply that all peripherals tolerate the same voltage.",
+        "The firmware serial number is logical. In this board configuration UART5 is GPS and UART6 is the full bidirectional receiver link. Other boards or firmware targets can use different mappings."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "wiring",
+      "sources": [
+        "S01",
+        "S17"
+      ],
+      "callout": null
+    },
+    {
+      "title": "UML deployment diagram",
+      "summary": "Where hardware and software execute",
+      "paragraphs": [
+        "Deployment assigns processes to physical devices. ArduCopter executes on the AIO; Mission Planner, FastAPI, OpenCV and PyTorch execute on the laptop. ELRS firmware executes on the transmitter module/receiver, and optional Backpack firmware executes on the compatible bridge hardware.",
+        "In ordinary commissioning only one GCS should own a serial or UDP receive endpoint. To run Mission Planner and the custom application simultaneously, use an explicitly configured MAVLink router/forwarder with distinct endpoints. Two applications competing for one COM port caused access-denied behavior during this project."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "deployment",
+      "sources": [
+        "S02",
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Manual radio control and modes",
+      "summary": "A three-position mode switch plus separate auxiliary requests",
+      "paragraphs": [
+        "Channel 6 is the main mode channel. At approximately 1000 it selects Stabilize, at 1500 Loiter and at 2000 GUIDED. The project assigns duplicate neighboring mode slots to make the intended three positions clear: FLTMODE1/2=0, FLTMODE3/4=5 and FLTMODE5/6=4.",
+        "Channel 5 high requests RTL (RC5_OPTION=4), channel 7 high requests AltHold (RC7_OPTION=70) and channel 8 high requests Land (RC8_OPTION=18). Channel 6 has no auxiliary function. Begin a mode check with the auxiliary switches low and test one request at a time. Do not assume simultaneous auxiliary switches have a priority order designed for this project.",
+        "Manual takeover means selecting an appropriate pilot-controlled mode. Moving sticks in GUIDED is not a general substitute for mode takeover. Stabilize uses manual throttle; Loiter needs a healthy position estimate; switching modes requires a pilot familiar with the resulting controls. The user confirmed mode changes, but a complete in-flight takeover test remains pending."
+      ],
+      "bullets": [],
+      "table": [
+        [
+          "Parameter",
+          "Recorded assignment"
+        ],
+        [
+          "FLTMODE_CH",
+          "6"
+        ],
+        [
+          "FLTMODE1 / 2",
+          "0 / 0: Stabilize"
+        ],
+        [
+          "FLTMODE3 / 4",
+          "5 / 5: Loiter"
+        ],
+        [
+          "FLTMODE5 / 6",
+          "4 / 4: GUIDED"
+        ],
+        [
+          "RC5 / RC7 / RC8_OPTION",
+          "4 RTL / 70 AltHold / 18 Land"
+        ]
+      ],
+      "diagram": null,
+      "sources": [
+        "S09"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Motor order and rotation",
+      "summary": "The corrected mapping differs from the original export",
+      "paragraphs": [
+        "Motor test letters indicate test sequence, not output channel numbers. After user-observed motor tests, outputs 2, 3 and 4 were reassigned. The user then confirmed the expected locations and spin directions shown below. This mapping is specific to this physical build and must not be transferred to another assembly.",
+        "The recorded protocol is DShot600 (MOT_PWM_TYPE=6); DShot does not use analog ESC throttle calibration. Correct test rotation does not prove a suitable motor idle, full-range ESC behavior, propeller installation, thrust balance or a safe tune. The motor KV, exact motor model, total mass and thrust margin still need a measured record."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "motors",
+      "sources": [
+        "S08"
+      ],
+      "callout": "Do not reload the old complete hello123 export over the corrected build; it contains the original SERVO output assignments."
+    },
+    {
+      "title": "Mission Planner commissioning workflow",
+      "summary": "Configuration, diagnostics and readback on the ground",
+      "paragraphs": [
+        "Mission Planner is used to select firmware target, inspect parameters, calibrate sensors and radio ranges, configure modes, test motors and inspect messages/logs. Configuration changes must be written, followed by any required reboot and a fresh parameter readback. A green UI value is not necessarily proof that every related setting was saved.",
+        "The project encountered a loader exception and a range warning during imports. The initial 3-inch pitch/roll acceleration estimate exceeded the documented range; the generated file was corrected to 1800 for ATC_ACC_P_MAX and ATC_ACC_R_MAX. This is a starting estimate, not a flight-derived tune.",
+        "Maintain three artifacts: the original export, a reviewed list of intended changes and a fresh post-reboot export. Record firmware version with each. Calibration and motor mapping are aircraft-specific, so a small reviewed patch is preferable to indiscriminate reuse of a donor setup."
+      ],
+      "bullets": [
+        "Remove props for powered setup and motor testing.",
+        "Check board orientation, radio calibration and external compass installation.",
+        "Confirm battery sensing before relying on voltage compensation or failsafes.",
+        "Inspect pre-arm errors rather than suppressing checks."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S18",
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "MAVLink telemetry contract",
+      "summary": "Messages consumed by the current adapter",
+      "paragraphs": [
+        "The adapter only accepts the configured aircraft system/component IDs, defaulting to 1/1. It records monotonic reception times per message family. The application itself sends a GCS heartbeat about once per second with source system 255 and component 190. Those IDs must be considered if other GCS software is also running.",
+        "The application checks heartbeat, position, GPS, battery and EKF age separately before movement. Position and heading are decoded from GLOBAL_POSITION_INT; battery percentage is taken from SYS_STATUS when supplied by the FC. Missing values remain unknown rather than being inferred from video OSD.",
+        "Message transport does not establish correctness of sensor inputs. Stale, inconsistent or unavailable navigation state must remain visible. Higher message rates are useful only when the RF link can sustain them without excessive buffering and loss."
+      ],
+      "bullets": [],
+      "table": [
+        [
+          "Message",
+          "Fields used"
+        ],
+        [
+          "HEARTBEAT",
+          "Mode and armed state"
+        ],
+        [
+          "GLOBAL_POSITION_INT",
+          "Latitude, longitude, relative altitude, speed, heading"
+        ],
+        [
+          "GPS_RAW_INT",
+          "Fix type and satellite count"
+        ],
+        [
+          "SYS_STATUS",
+          "Battery voltage and remaining percentage"
+        ],
+        [
+          "EKF_STATUS_REPORT",
+          "Estimator readiness flags"
+        ],
+        [
+          "ATTITUDE / SCALED_PRESSURE",
+          "Attitude; available barometer temperature"
+        ],
+        [
+          "STATUSTEXT / RADIO_STATUS",
+          "Flight messages; link diagnostics"
+        ]
+      ],
+      "diagram": null,
+      "sources": [
+        "S10",
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "UML telemetry sequence",
+      "summary": "State moves from the FC to the interface",
+      "paragraphs": [
+        "The browser does not open the aircraft serial port. It subscribes to the local server, which reads snapshots supplied by the telemetry worker. This keeps aircraft communication independent from browser rendering and AI workloads.",
+        "A fresh heartbeat only proves that a heartbeat arrived. It cannot substitute for fresh absolute position, valid battery measurement or estimator readiness. All displayed timestamps should be interpreted as reception age, not a measurement of over-air latency."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "telemetry_seq",
+      "sources": [
+        "S10",
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "GUIDED movement and control authority",
+      "summary": "The laptop sends setpoints; the FC stabilizes flight",
+      "paragraphs": [
+        "The implementation sends SET_POSITION_TARGET_LOCAL_NED with MAV_FRAME_BODY_NED and velocity-only mask 0x0DC7 (3527). Its body axes are forward, right and down; an upward command therefore uses negative vertical velocity. The onboard autopilot interprets the request only in a suitable mode and closes the attitude/motor-control loops.",
+        "The operator renews a control lease every second; it expires after three seconds. Manual app requests last at most one second and the UI normally asks for 0.5 seconds. Initial application speed is 0.5 m/s. Neither a sent packet nor an HTTP success establishes physical motion; velocity targets do not carry COMMAND_ACK in this usage.",
+        "This application does not arm, select GUIDED, take off, land or upload an onboard mission. The operating concept is manual takeoff and stable hover, deliberate GUIDED selection, supervised laptop requests and radio takeover. The model and route generator have no authority to bypass the state gates."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S04",
+        "S11"
+      ],
+      "callout": "Live control defaults to false. Physical behavior and reliable response require separate SITL/bench/flight acceptance."
+    },
+    {
+      "title": "UML command sequence",
+      "summary": "Requests cross safety gates before reaching the radio",
+      "paragraphs": [
+        "A UI action first passes local HTTP validation and station policy. An accepted request is encoded into MAVLink, sent over the selected endpoint and interpreted by ArduCopter. The return telemetry path supplies observed position/mode state.",
+        "On a pilot mode change away from GUIDED, the application clears its lease and stops issuing velocity requests. A mode change can occur before the next laptop heartbeat is processed; onboard mode handling is therefore the primary authority boundary, not a browser response time."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "command_seq",
+      "sources": [
+        "S04",
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Analog video acquisition",
+      "summary": "The goggles and telemetry radio do not automatically feed laptop video",
+      "paragraphs": [
+        "The aircraft camera supplies analog video, optionally through the FC OSD, to the VTX. The iFlight goggles receive the RF image, but no usable AV/USB output was confirmed for this exact model. Their memory-card slot is for recording/storage, not a general live video output.",
+        "Two candidate ground routes were discussed. A USB UVC analog receiver combines RF reception and USB conversion. Alternatively, an RC805-style analog receiver provides composite video to a separate EasyCAP-style USB capture adapter. These are candidates, not confirmed purchases or tested capture devices.",
+        "The eight-channel RC805 must match an exact supported VTX frequency: 5705, 5685, 5665, 5645, 5885, 5905, 5925 or 5945 MHz. It is not enough that both products say 5.8 GHz. Its listing specifies 12 V power; the capture adapter gets USB power. Check AV connector pinout/cable and actual Windows driver compatibility."
+      ],
+      "bullets": [
+        "UVC route: VTX -> analog USB receiver -> laptop.",
+        "Composite route: VTX -> RC805 -> composite capture -> laptop.",
+        "Goggles may receive the same broadcast independently."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S13",
+        "S14"
+      ],
+      "callout": "No new component prices or stock claims are made in this pack; availability changes and was not re-quoted."
+    },
+    {
+      "title": "Video formats and timing",
+      "summary": "Preserve source information and measure complete latency",
+      "paragraphs": [
+        "A capture device may expose PAL 720x576 at 25 fps or NTSC 720x480 at approximately 30 fps. These are seller-described modes for the investigated capture adapter, not measured support from a purchased device. Start with the camera/capture standard and verify frame shape, color and stable sync. A higher requested resolution does not add analog source detail.",
+        "The application uses OpenCV capture and MJPEG delivery. Its reported capture-frame age begins at the software read, while inference time describes model processing. Neither includes the entire camera-to-VTX-to-RF-to-capture-to-display chain. Measure end-to-end delay with a visible timer or LED comparison.",
+        "Capture and inference run independently. Inference processes a recent frame rather than building an ever-growing queue. Annotated detection video uses the analyzed source frame. Raw recording remains available independently; slower inference means skipped source frames, not a claim of full-rate recognition."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S14",
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "UML use cases and operator roles",
+      "summary": "Pilot and rescue operator have distinct responsibilities",
+      "paragraphs": [
+        "The pilot is responsible for flight readiness, manual control, mode selection and landing. The rescue operator reviews sensor information, proposes a search, validates route limits and verifies candidate incidents. These roles may be held by one trained person in a bench demonstration, but their responsibilities remain distinct.",
+        "The app can advise hold or pause a running supervised mission under an explicitly enabled person policy. It cannot declare that the site is obstacle-free or that a detected object is a confirmed survivor. Incident evidence and actions require human interpretation."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "usecase",
+      "sources": [
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Application component architecture",
+      "summary": "Existing modules and their communication",
+      "paragraphs": [
+        "FastAPI validates requests and serves the interface. Station coordinates telemetry, video, movement gates, mission execution, intelligence, recording and storage. The browser receives status through SSE and video through MJPEG; write actions carry a random per-process token and are restricted by same-origin and Host checks.",
+        "The software remains local by default. Optional online map layers make network requests for background tiles, but detection and the bounded intent planner do not need a cloud model. Do not expose the control server to a public interface without a separate access-control design. Incoming UDP MAVLink is not authenticated by this adapter."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "components",
+      "sources": [
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "UML runtime class diagram",
+      "summary": "Implementation classes and data ownership",
+      "paragraphs": [
+        "Config validates operating mode, flight envelope and detector options. Telemetry owns MAVLink decoding. Video owns capture and analysis workers. YoloDetector adapts model output into normalized boxes. Intelligence tracks image-space candidates. Mission computes bounded waypoint velocity; Store and Recorder preserve evidence.",
+        "The class view is intentionally condensed. Mission and Telemetry are separate classes, as are Store and Recorder, even where grouped in a diagram box to retain readability. The editable Mermaid source contains the individual ownership relationships for a more detailed rendering."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "classes",
+      "sources": [
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "AURA model and enhancement integration",
+      "summary": "Aerial model, lightweight alternative and explicit processing choices",
+      "paragraphs": [
+        "The team integration is pinned to upstream commit d50829119b598e5b32b352f384fdd25aca367f08. A downloader verifies SHA-256 checksums before using local checkpoints. The integrated models are YOLOv8m VisDrone and YOLO26n COCO. The recorded VisDrone checkpoint has no verified CBAM blocks; the pack does not claim CBAM inference.",
+        "VisDrone labels pedestrian and people are mapped to the existing person policy while retaining their original labels. Classical CLAHE and FPV hybrid enhancement are optional model-input transformations. They are not a learned accuracy guarantee. Original imagery remains important evidence for operator comparison.",
+        "Optional OSD exclusion is a calibrated geometric post-filter. It can hide real objects overlapping telemetry graphics, so it is off by default and requires a matching profile. The included profile applies to one source layout, not every camera. Detector failures are surfaced explicitly; a selected broken YOLO model is not silently replaced by HOG."
+      ],
+      "bullets": [
+        "CPU FP32 is the installed baseline; compatible CUDA use is configurable.",
+        "The earlier recorded CPU timing was roughly 230-320 ms per warmed result.",
+        "That observation is not a benchmark across all clips or a measure of aerial accuracy."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S11",
+        "S12"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Uploaded-video test workflow",
+      "summary": "Local video testing does not open a drone-control connection",
+      "paragraphs": [
+        "The operator chooses a local file, detector and enhancement, then uploads through the existing app. The server accepts supported containers up to 500 MB, checks authentication and decodability, and only permits source replacement in demo mode. Recordings must be stopped before swapping the source.",
+        "A source change clears the control lease and old person tracks and pauses any simulated mission. Playback loops at the source rate; AI uses the newest available frames. Annotated MJPEG preserves frame-to-box alignment and reports inference age. The displayed flight telemetry in this mode is simulated, even though the video and model inference are real."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "video_seq",
+      "sources": [
+        "S11",
+        "S12"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Person evidence, tracking and decisions",
+      "summary": "Temporal persistence reduces single-frame triggers",
+      "paragraphs": [
+        "Normalized boxes are associated using image-space intersection over union. The existing tracker requires three distinct matched detection frames before calling a track persistent. A track expires after about 1.5 seconds without updates; a confirmed candidate must also have been seen recently, within about 0.8 seconds.",
+        "Advisory mode presents evidence. The optional pause-on-person policy pauses an active mission when a persistent candidate is present and creates an incident with a cooldown. It does not identify the person, infer injuries or establish a victim position. The recorded aircraft coordinates are context about the camera platform.",
+        "Slow CPU inference, analog interference, high altitude, small objects and camera angle can all reduce useful evidence. Counted boxes across frames are not unique people. Camera calibration, synchronized pose and terrain/ranging data would be needed for defensible image-to-ground geolocation."
+      ],
+      "bullets": [
+        "Do not interpret HOG scores as probabilities.",
+        "Keep original class labels and source frame IDs in review evidence.",
+        "Auto-pause recovery remains latched until explicit operator action."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S11",
+        "S12"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Mission activity and route feedback",
+      "summary": "GPS waypoints are followed by a laptop controller",
+      "paragraphs": [
+        "The app validates 1-100 WGS84 points with relative altitude and hold time against its configured radius/ceiling. Its local grammar can propose search grids, perimeters, orbit-like routes and bounded movements. It is a deterministic intent parser, not an unrestricted language-model pilot.",
+        "The navigator computes north/east/vertical error to the next point, limits speed, rotates horizontal velocity by current heading and streams body-frame requests. Arrival uses approximately 0.6 m horizontal and 0.4 m altitude tolerances in the present implementation. Those tolerances require real positioning-performance assessment; ordinary GPS must not be assumed to achieve them reliably."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "activity",
+      "sources": [
+        "S11"
+      ],
+      "callout": "This route is not an onboard AUTO mission. The app does not upload takeoff/land items, provide obstacle avoidance or evaluate terrain clearance."
+    },
+    {
+      "title": "Mission state and recovery",
+      "summary": "Pause is a latched state, not automatic fault recovery",
+      "paragraphs": [
+        "Loading a validated route creates ready state. Start begins at the first point. Operator pause, unavailable prerequisites or person policy can produce paused state. Resume requires current prerequisites and an explicit request; cancelling terminates the current route execution.",
+        "Editing a paused plan creates a new ready plan. Automatic return of a good signal does not mean the earlier action should resume. The distinction is important after pilot intervention, low battery, video loss or a person lead that requires review."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "state",
+      "sources": [
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Incident storage and data model",
+      "summary": "Evidence is stored locally with explicit provenance",
+      "paragraphs": [
+        "SQLite stores events as id, UTC time, kind and JSON payload, and stores missions as id, name and plan JSON. Incident entries can reference a JPEG snapshot and the aircraft position available at that time. The raw AVI recorder runs independently with bounded duration/storage; video uploads remain separate local files.",
+        "The application supports event/log export and route JSON/GeoJSON/WPL exchange with defined limitations. A WPL export is not proof that it was uploaded to or accepted by a vehicle. Data retention is manual, and uploaded footage can contain people or locations, so sharing the code repository is different from publishing the local evidence directory."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": "data",
+      "sources": [
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Safety gates and onboard failsafe layers",
+      "summary": "Protective logic belongs both onboard and in the application",
+      "paragraphs": [
+        "App live control requires enabled configuration, an operator lease, fresh heartbeat/position/GPS/battery/EKF, GUIDED mode, armed state, a 3D fix, estimator readiness, sufficient battery, valid altitude/radius and fresh video. Current age limits are 2.5 seconds for core telemetry and 1 second for video. Defaults are 0.5 m/s, 30 m altitude and 50 m radius.",
+        "Onboard RC, GCS, battery and estimator failsafes operate independently from those application gates. The historical settings include FS_THR_ENABLE=1, FS_GCS_ENABLE=1, FS_GCS_TIMEOUT=5, FS_OPTIONS=16 and GUID_TIMEOUT=3. FS_OPTIONS=16 permits continued pilot-controlled operation on GCS loss; it is not a general instruction to continue GUIDED flight.",
+        "RC loss and GCS loss are separate failure events even when they share an RF system. A disarmed test that produces a failsafe message establishes detection, not the resulting airborne trajectory. Other GCS heartbeats can affect a laptop-loss test. Verify behavior with a controlled procedure and logs."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S11",
+        "S05",
+        "S06"
+      ],
+      "callout": "Application home/radius checks are not a replacement for the onboard fence. The project fence parameters were staged with FENCE_ENABLE=0."
+    },
+    {
+      "title": "Parameter register and provenance",
+      "summary": "Historical changes grouped by purpose; read back before relying on them",
+      "paragraphs": [
+        "The original hello123 export contained 1,098 entries. Subsequent small files changed battery protection, telemetry streams, modes, navigation speeds, fence limits, motor mapping, GPS baud and initial tuning. The earlier combined setup patch did not contain later motor/GPS/tuning changes. These files must not be treated as interchangeable complete current-state exports.",
+        "A fresh FC parameter export should be compared with this register and the physical build. The pack deliberately does not provide a new flight-ready all-parameter import because current GPS readiness, sensor calibration and airborne behavior are not verified."
+      ],
+      "bullets": [],
+      "table": [
+        [
+          "Purpose",
+          "Recorded project values"
+        ],
+        [
+          "Battery sensing",
+          "Monitor 4; volt pin 10; current pin 12; multiplier 11; scale 39.4"
+        ],
+        [
+          "Battery protection",
+          "Capacity 650; low 14.4 V / RTL; critical 14.0 V / Land; arm 14.7 V"
+        ],
+        [
+          "GPS / ELRS",
+          "SERIAL5=GPS at 115200; SERIAL6=MAVLink2 at 460800"
+        ],
+        [
+          "Telemetry",
+          "MAV2 EXT_STAT/POSITION/EXTRA1-3/RAW_SENS/RC_CHAN = 1 Hz"
+        ],
+        [
+          "Speed / fence staging",
+          "Loiter 2 m/s; WP 1 m/s; RTL 2 m/s; radius 50 m; max 30 m; fence OFF"
+        ],
+        [
+          "Initial tuning",
+          "Pitch/roll accel 1800; yaw 333; gyro filter 115 Hz; thrust expo 0.41"
+        ],
+        [
+          "Preserve",
+          "Calibration, verified motor map and radio mapping; no skipped arming checks"
+        ]
+      ],
+      "diagram": null,
+      "sources": [
+        "S11"
+      ],
+      "callout": "MOT_BAT_VOLT_MIN=13.2 V is a compensation bound, not the chosen critical landing threshold. Do not confuse the two."
+    },
+    {
+      "title": "Commissioning and field workflow",
+      "summary": "Progress through evidence-based acceptance stages",
+      "paragraphs": [
+        "Begin with a complete build inventory, backups and propellers removed. Establish correct board orientation, radio calibration, motor order/direction, sensor installation and valid battery measurement. Resolve GPS communication and navigation readiness before evaluating position-dependent modes.",
+        "Next verify USB telemetry, then wireless telemetry using the actual bridge. Validate video capture separately from detection. Use SITL or an appropriate controlled rig for movement-axis interpretation, command timeout and mode-takeover behavior. Only after ground acceptance should a trained pilot conduct a manual outdoor hover and log review in a suitable clear area.",
+        "For application flight, establish a safe manual hover, select GUIDED deliberately, review the route and enable the control lease. Keep the pilot ready for mode takeover. After a fault, pause and assess rather than automatically resuming. Land through the pilot/onboard mode procedure and review logs, evidence, battery consumption and latency."
+      ],
+      "bullets": [
+        "Ground acceptance: electrical, mechanical, sensor, RC and telemetry checks.",
+        "Flight acceptance: stability, vibration, hover current, GPS quality, takeover and protective behavior.",
+        "Application acceptance: freshness gates, bounded movement, video loss and incident policy."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S11",
+        "S18"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Test matrix and remaining measurements",
+      "summary": "Software tests do not certify physical flight behavior",
+      "paragraphs": [
+        "The last recorded automated run reported 46 passing tests. It covered control gating, MAVLink encoding/decoding, route validation, tracking, upload behavior and local evidence generation. Actual inference on one team FPV sample established that the model loads and returns detections, not its precision, recall or performance over disaster scenes.",
+        "For every physical acceptance test, record configuration/version, setup, expected result, observed result, pass/fail and evidence filename. Test one independent fault at a time. Record separate timings for camera-to-display delay, inference throughput, command-to-observed-response delay and mode takeover."
+      ],
+      "bullets": [],
+      "table": [
+        [
+          "Test",
+          "Current evidence / next measurement"
+        ],
+        [
+          "Motor mapping / mode selection",
+          "User confirmed on bench; retain a labelled build record"
+        ],
+        [
+          "RC-loss detection",
+          "Message appeared and cleared while disarmed"
+        ],
+        [
+          "GPS / compass",
+          "Fix and level-heading verification unresolved"
+        ],
+        [
+          "Battery",
+          "Plausible 14.95 V once shown; external comparison/current still needed"
+        ],
+        [
+          "AI upload",
+          "Software/browser verified; task accuracy unmeasured"
+        ],
+        [
+          "Wireless command / GCS loss",
+          "Controlled link-loss response and logs still required"
+        ],
+        [
+          "Manual flight / endurance",
+          "Stable hover, vibration, power and duration not demonstrated here"
+        ]
+      ],
+      "diagram": null,
+      "sources": [
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Troubleshooting by subsystem",
+      "summary": "Use a discriminating check before changing parameters",
+      "paragraphs": [
+        "GPS: distinguish no receiver data from a detected receiver with poor fix. Confirm stable supply, TX/RX crossing, UART5 assignment and fresh GPS telemetry; then test antenna-up outdoors away from interference. Obtain satellite count/fix/accuracy rather than relying on LED colors. A compass can be detected while GPS serial data is still wrong.",
+        "Battery: USB-only near-zero pack voltage is expected when the battery input is unpowered. With a pack connected, compare against a meter/charger before adjusting scale. A low-arming-voltage error is not a reason to bypass arming checks. Radio: verify ELRS connection, moving channel bars and the transition into/out of failsafe.",
+        "Laptop/video: close competing applications before opening a COM port or camera. Check the exact RF video frequency, capture standard, data cable and driver. An HDMI-only adapter does not accept composite video. AI: verify dependencies, local weights/checksums, source decodability and warm-up status; test the lightweight model if processing cannot keep up."
+      ],
+      "bullets": [
+        "Preserve one known-good baseline and change one variable per diagnostic step.",
+        "Use current STATUSTEXT and FC logs; old UI messages can outlast a transient condition.",
+        "Do not infer a live GPS position from map centering or cached coordinates."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S11",
+        "S03"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Disaster-management extensions",
+      "summary": "Feasible additions and their boundaries",
+      "paragraphs": [
+        "The easiest software additions are operator-confirmed incident status, priority, notes, revisits and a mission evidence report. A future coverage view should state its assumptions; the aircraft track alone does not prove the camera observed every point in a search area.",
+        "A small prerecorded-announcement prototype could use ESP32/XIAO, DFPlayer Mini, storage and a lightweight speaker. An alternative is an I2S amplifier with an ESP32S3. Send a selected message ID over a separately engineered command path rather than trying to stream voice through the existing telemetry link. Measure intelligibility against propeller noise and verify regulator/payload margin.",
+        "A stationary ground SOS unit avoids adding aircraft mass and can use a button, acknowledgement light and optional microphone. Marker release or supply delivery would need payload/thrust, release-output and safe-drop testing. None of these add-ons are installed or integrated in the current application."
+      ],
+      "bullets": [
+        "Prioritize incident workflow before extra airborne payload.",
+        "Treat long-range Wi-Fi, airborne speech recognition and live two-way audio as research tasks.",
+        "Document each proposed addition separately from the confirmed build."
+      ],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S15",
+        "S16",
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "Limitations, glossary and viva questions",
+      "summary": "Explain the design without overstating capability",
+      "paragraphs": [
+        "Current limits: unresolved physical GPS readiness, unverified end-to-end live video acquisition, no onboard mission upload, no automatic arming/takeoff/landing, no obstacle avoidance, no exact victim geolocation and no validated rescue-scene accuracy benchmark. AI candidates require human review. A smartphone/ESP32 addition does not remove those limits.",
+        "AIO means all-in-one board; FC is flight controller; ESC is electronic speed controller; GCS is ground control station; GNSS is satellite navigation; EKF is the state estimator; UART is a serial interface; MAVLink is a message protocol; ELRS is the RC/RF ecosystem; VTX/VRX are video transmitter/receiver; OSD is an image overlay; UVC is a USB video-device interface.",
+        "Why both Mission Planner and our app? Mission Planner commissions and diagnoses the FC; our app adds search/vision/incident workflows. Where does AI run? On the laptop. Why separate video and telemetry? They use different sensors, links and interfaces. Why does GPS matter? Current GUIDED navigation uses position/heading feedback. Why is a person box not a coordinate? Projection needs calibrated geometry, synchronized pose and terrain/ranging."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S11"
+      ],
+      "callout": null
+    },
+    {
+      "title": "References and source register",
+      "summary": "Trace implementation details to project evidence and primary documentation",
+      "paragraphs": [
+        "Primary evidence: this project conversation, its screenshots and user-reported bench results; the hello123 parameter export and later commissioning patches; the application Python/JavaScript source; docs/COMMISSIONING.md and docs/AURA_INTEGRATION.md; the 16 October software verification record.",
+        "Documentation assembled on 26 October 2026. Board wiring and firmware behavior must be checked against the exact installed revision. Source links are references, not evidence that the documented hardware was purchased or that all optional firmware features are available. Keep a post-reboot FC export and measured acceptance record with the final report."
+      ],
+      "bullets": [],
+      "table": null,
+      "diagram": null,
+      "sources": [
+        "S01",
+        "S02",
+        "S03",
+        "S04",
+        "S05",
+        "S06",
+        "S07",
+        "S08",
+        "S09",
+        "S10",
+        "S11",
+        "S12",
+        "S13",
+        "S14",
+        "S15",
+        "S16",
+        "S17",
+        "S18"
+      ],
+      "callout": null
+    }
+  ],
+  "diagrams": {
+    "architecture": {
+      "id": "architecture",
+      "title": "Three independent paths in one system",
+      "nodes": [
+        {
+          "id": "radio",
+          "label": "Pilot / radio\nELRS TX module",
+          "x": 15,
+          "y": 40,
+          "w": 220,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "rx",
+          "label": "Aircraft ELRS RX",
+          "x": 335,
+          "y": 40,
+          "w": 220,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "fc",
+          "label": "AIO + ArduCopter\nstabilization / EKF",
+          "x": 685,
+          "y": 40,
+          "w": 280,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "laptop",
+          "label": "Laptop GCS\nMP or custom app",
+          "x": 15,
+          "y": 205,
+          "w": 220,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "bridge",
+          "label": "TX Backpack Wi-Fi\nor supported USB",
+          "x": 335,
+          "y": 205,
+          "w": 220,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "camera",
+          "label": "FPV camera + OSD\nanalog VTX",
+          "x": 685,
+          "y": 370,
+          "w": 280,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "vrx",
+          "label": "5.8 GHz analog VRX\nUSB capture or UVC",
+          "x": 335,
+          "y": 370,
+          "w": 220,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "ai",
+          "label": "Laptop video / AI\nincidents / review",
+          "x": 15,
+          "y": 370,
+          "w": 220,
+          "h": 76,
+          "kind": "box"
+        }
+      ],
+      "edges": [
+        {
+          "a": "radio",
+          "b": "rx",
+          "label": "RC + MAVLink RF",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "rx",
+          "b": "fc",
+          "label": "UART6 TX/RX",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "laptop",
+          "b": "bridge",
+          "label": "UDP / serial",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "bridge",
+          "b": "rx",
+          "label": "via TX RF link",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "camera",
+          "b": "vrx",
+          "label": "analog RF video",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "vrx",
+          "b": "ai",
+          "label": "USB video",
+          "side": "auto",
+          "style": "solid"
+        }
+      ],
+      "caption": "Telemetry is bidirectional. Video travels separately. The laptop bridge depends on the actual transmitter hardware.",
+      "mermaid": "flowchart LR\n Pilot[Radio handset + ELRS TX] <-->|RC + MAVLink RF| RX[Aircraft ELRS receiver]\n RX <-->|UART6| FC[AIO running ArduCopter]\n Laptop[Mission Planner OR custom application] <-->|UDP or serial| Bridge[TX Backpack or supported TX USB]\n Bridge <-->|via transmitter RF link| RX\n Camera[FPV camera + OSD + VTX] -->|5.8 GHz analog| VRX[Video receiver + USB capture]\n VRX -->|USB video| AI[Laptop video + AI]\n",
+      "kind": "graph"
+    },
+    "wiring": {
+      "id": "wiring",
+      "title": "Aircraft communication interfaces",
+      "nodes": [
+        {
+          "id": "fc",
+          "label": "SpeedyBee AIO\nArduCopter",
+          "x": 385,
+          "y": 190,
+          "w": 230,
+          "h": 100,
+          "kind": "box"
+        },
+        {
+          "id": "gps",
+          "label": "GM10 GPS\nTX / RX / 5V / GND",
+          "x": 20,
+          "y": 30,
+          "w": 260,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "comp",
+          "label": "External compass\nSDA / SCL, if fitted",
+          "x": 710,
+          "y": 30,
+          "w": 270,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "rx",
+          "label": "ELRS receiver\nTX / RX / power",
+          "x": 20,
+          "y": 365,
+          "w": 260,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "esc",
+          "label": "Integrated 4-in-1 ESC\n4 motors",
+          "x": 710,
+          "y": 365,
+          "w": 270,
+          "h": 76,
+          "kind": "box"
+        }
+      ],
+      "edges": [
+        {
+          "a": "gps",
+          "b": "fc",
+          "label": "GPS TX -> R5\nGPS RX <- T5",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "comp",
+          "b": "fc",
+          "label": "I2C, separate from GPS",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "rx",
+          "b": "fc",
+          "label": "RX TX -> R6\nRX RX <- T6",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "fc",
+          "b": "esc",
+          "label": "DShot600 signals",
+          "side": "auto",
+          "style": "solid"
+        }
+      ],
+      "caption": "Arrows summarize signal interfaces, not pin order or connector orientation. Check labels and voltage before soldering.",
+      "mermaid": "flowchart TB\n GPS[GM10 GPS TX] -->|UART5| R5[AIO R5]\n T5[AIO T5] --> GPSRX[GM10 GPS RX]\n Compass[External compass if present] <-->|SDA + SCL| FC[AIO]\n ELRSTX[ELRS receiver TX] --> R6[AIO R6]\n T6[AIO T6] --> ELRSRX[ELRS receiver RX]\n FC -->|DShot600| ESC[Integrated ESC]\n ESC --> Motors[Four motors]\n",
+      "kind": "graph"
+    },
+    "deployment": {
+      "id": "deployment",
+      "title": "UML deployment view",
+      "nodes": [
+        {
+          "id": "air",
+          "label": "<<device>> Aircraft\nAIO: ArduCopter 4.7.1",
+          "x": 30,
+          "y": 50,
+          "w": 420,
+          "h": 105,
+          "kind": "box"
+        },
+        {
+          "id": "sensors",
+          "label": "<<device>> Sensors\nIMU / barometer / GNSS",
+          "x": 560,
+          "y": 50,
+          "w": 410,
+          "h": 105,
+          "kind": "box"
+        },
+        {
+          "id": "radio",
+          "label": "<<device>> Radio system\nELRS TX + receiver",
+          "x": 30,
+          "y": 315,
+          "w": 420,
+          "h": 105,
+          "kind": "box"
+        },
+        {
+          "id": "pc",
+          "label": "<<device>> Windows laptop\nMission Planner / FastAPI / AI",
+          "x": 560,
+          "y": 315,
+          "w": 410,
+          "h": 105,
+          "kind": "box"
+        }
+      ],
+      "edges": [
+        {
+          "a": "sensors",
+          "b": "air",
+          "label": "SPI / I2C / UART",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "radio",
+          "b": "air",
+          "label": "RC + MAVLink",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "radio",
+          "b": "pc",
+          "label": "Wi-Fi UDP or TX USB",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "air",
+          "b": "pc",
+          "label": "USB service link\nOR wireless MAVLink",
+          "side": "auto",
+          "style": "dashed"
+        }
+      ],
+      "caption": "Mission Planner and the custom application are peer GCS clients. Sharing an endpoint requires an intentional router.",
+      "mermaid": "flowchart TB\n subgraph Aircraft\n AIO[\"<<device>> AIO\n<<executionEnvironment>> ArduCopter\"]\n GNSS[GNSS + optional external compass]\n end\n subgraph Ground\n TX[ELRS transmitter module]\n PC[\"<<device>> Windows laptop\nMission Planner OR custom FastAPI GCS\"]\n end\n GNSS --> AIO\n TX <-->|RF + aircraft receiver| AIO\n PC <-->|Backpack UDP or supported TX USB| TX\n PC -.->|USB setup alternative| AIO\n",
+      "kind": "graph"
+    },
+    "usecase": {
+      "id": "usecase",
+      "title": "UML use-case view",
+      "nodes": [
+        {
+          "id": "pilot",
+          "label": "Pilot\nmanual authority",
+          "x": 15,
+          "y": 185,
+          "w": 170,
+          "h": 95,
+          "kind": "actor"
+        },
+        {
+          "id": "op",
+          "label": "Rescue operator\nreview authority",
+          "x": 815,
+          "y": 185,
+          "w": 170,
+          "h": 95,
+          "kind": "actor"
+        },
+        {
+          "id": "manual",
+          "label": "Fly / select mode",
+          "x": 255,
+          "y": 20,
+          "w": 460,
+          "h": 64,
+          "kind": "ellipse"
+        },
+        {
+          "id": "review",
+          "label": "View video + telemetry",
+          "x": 255,
+          "y": 125,
+          "w": 460,
+          "h": 64,
+          "kind": "ellipse"
+        },
+        {
+          "id": "mission",
+          "label": "Review / execute route",
+          "x": 255,
+          "y": 230,
+          "w": 460,
+          "h": 64,
+          "kind": "ellipse"
+        },
+        {
+          "id": "incident",
+          "label": "Verify lead / save incident",
+          "x": 255,
+          "y": 335,
+          "w": 460,
+          "h": 64,
+          "kind": "ellipse"
+        }
+      ],
+      "edges": [
+        {
+          "a": "pilot",
+          "b": "manual",
+          "label": "",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "pilot",
+          "b": "mission",
+          "label": "",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "op",
+          "b": "review",
+          "label": "",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "op",
+          "b": "mission",
+          "label": "",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "op",
+          "b": "incident",
+          "label": "",
+          "side": "auto",
+          "style": "solid"
+        }
+      ],
+      "caption": "Search assistance does not replace pilot authority or human verification of a potential survivor.",
+      "mermaid": "flowchart LR\n Pilot[\"Actor: Pilot\"] --> Fly([Fly and select flight mode])\n Pilot --> Takeover([Take manual control])\n Operator[\"Actor: Rescue operator\"] --> View([View video and telemetry])\n Operator --> Plan([Review and run bounded route])\n Operator --> Incident([Verify and record rescue lead])\n",
+      "kind": "graph"
+    },
+    "components": {
+      "id": "components",
+      "title": "UML software component view",
+      "nodes": [
+        {
+          "id": "ui",
+          "label": "<<component>> Browser\nmap / video / actions",
+          "x": 20,
+          "y": 30,
+          "w": 280,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "api",
+          "label": "<<component>> FastAPI\nauth / validation",
+          "x": 365,
+          "y": 30,
+          "w": 280,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "station",
+          "label": "<<component>> Station\ncoordination / gates",
+          "x": 710,
+          "y": 30,
+          "w": 270,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "video",
+          "label": "Video + YoloDetector\nIntelligence",
+          "x": 20,
+          "y": 335,
+          "w": 280,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "mission",
+          "label": "Mission + navigator\nTelemetry / pymavlink",
+          "x": 365,
+          "y": 335,
+          "w": 280,
+          "h": 76,
+          "kind": "box"
+        },
+        {
+          "id": "store",
+          "label": "Store + Recorder\nSQLite / JPEG / AVI",
+          "x": 710,
+          "y": 335,
+          "w": 270,
+          "h": 76,
+          "kind": "box"
+        }
+      ],
+      "edges": [
+        {
+          "a": "ui",
+          "b": "api",
+          "label": "HTTP / SSE / MJPEG",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "api",
+          "b": "station",
+          "label": "validated actions",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "station",
+          "b": "video",
+          "label": "observe / evidence",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "station",
+          "b": "mission",
+          "label": "bounded requests",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "station",
+          "b": "store",
+          "label": "record events",
+          "side": "auto",
+          "style": "solid"
+        }
+      ],
+      "caption": "Independent workers keep capture, inference and telemetry from waiting on one another. The station owns policy decisions.",
+      "mermaid": "flowchart TB\n UI[Browser UI] <-->|HTTP + SSE + MJPEG| API[FastAPI]\n API --> Station[Station coordinator]\n Station --> Video[Video + YOLO adapter]\n Station --> Mission[Mission navigator]\n Station --> Telemetry[Telemetry / pymavlink]\n Station --> Store[SQLite Store]\n Video --> Intelligence[Temporal person tracker]\n Video --> Recorder[AVI recorder]\n",
+      "kind": "graph"
+    },
+    "classes": {
+      "id": "classes",
+      "title": "UML runtime class relationships",
+      "nodes": [
+        {
+          "id": "station",
+          "label": "Station\nstart(), state(), loop()",
+          "x": 365,
+          "y": 10,
+          "w": 280,
+          "h": 85,
+          "kind": "box"
+        },
+        {
+          "id": "config",
+          "label": "Config\nvalidated settings",
+          "x": 20,
+          "y": 10,
+          "w": 260,
+          "h": 85,
+          "kind": "box"
+        },
+        {
+          "id": "video",
+          "label": "Video / YoloDetector\ncapture(), predict()",
+          "x": 20,
+          "y": 185,
+          "w": 270,
+          "h": 85,
+          "kind": "box"
+        },
+        {
+          "id": "mission",
+          "label": "Mission / Telemetry\ntick(), send_velocity()",
+          "x": 365,
+          "y": 185,
+          "w": 280,
+          "h": 85,
+          "kind": "box"
+        },
+        {
+          "id": "store",
+          "label": "Store / Recorder\nadd(), save_mission()",
+          "x": 710,
+          "y": 185,
+          "w": 270,
+          "h": 85,
+          "kind": "box"
+        },
+        {
+          "id": "intel",
+          "label": "Intelligence\nupdate(), snapshot()",
+          "x": 20,
+          "y": 375,
+          "w": 270,
+          "h": 85,
+          "kind": "box"
+        }
+      ],
+      "edges": [
+        {
+          "a": "config",
+          "b": "station",
+          "label": "settings",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "station",
+          "b": "video",
+          "label": "owns",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "station",
+          "b": "mission",
+          "label": "owns",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "station",
+          "b": "store",
+          "label": "owns",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "video",
+          "b": "intel",
+          "label": "detection snapshots",
+          "side": "auto",
+          "style": "solid"
+        }
+      ],
+      "caption": "This is a condensed implementation class view; function names reflect the Python application rather than hypothetical modules.",
+      "mermaid": "classDiagram\n Station *-- Video\n Station *-- Telemetry\n Station *-- Mission\n Station *-- Intelligence\n Station *-- Store\n Station *-- Recorder\n Video --> YoloDetector\n Station --> Config\n class Station {\n +state()\n +loop()\n +review_video()\n }\n class Telemetry {\n +accept(message)\n +send_velocity(vx,vy,vz)\n }\n class Intelligence {\n +update(video)\n +snapshot()\n }\n",
+      "kind": "graph"
+    },
+    "telemetry_seq": {
+      "id": "telemetry_seq",
+      "title": "UML telemetry sequence",
+      "kind": "sequence",
+      "actors": [
+        "Sensors / FC",
+        "ELRS link",
+        "GCS adapter",
+        "Browser"
+      ],
+      "steps": [
+        [
+          0,
+          1,
+          "FC emits MAVLink messages"
+        ],
+        [
+          1,
+          2,
+          "Bridge delivers UDP / serial bytes"
+        ],
+        [
+          2,
+          2,
+          "Filter system/component + timestamp"
+        ],
+        [
+          2,
+          3,
+          "SSE status snapshot"
+        ],
+        [
+          3,
+          3,
+          "Render ages, instruments and map"
+        ]
+      ],
+      "caption": "Freshness is tracked per message family. A fresh heartbeat alone does not establish fresh GPS, battery or EKF data.",
+      "mermaid": "sequenceDiagram\n participant FC as ArduCopter\n participant RF as ELRS + bridge\n participant GCS as Telemetry adapter\n participant UI as Browser\n FC->>RF: HEARTBEAT / position / GPS / battery / EKF\n RF->>GCS: MAVLink over UDP or serial\n GCS->>GCS: Check source IDs and update timestamps\n GCS-->>UI: SSE /api/stream\n UI->>UI: Show freshness and flight status\n"
+    },
+    "command_seq": {
+      "id": "command_seq",
+      "title": "UML supervised movement sequence",
+      "kind": "sequence",
+      "actors": [
+        "Pilot / UI",
+        "Station gates",
+        "MAVLink link",
+        "ArduCopter"
+      ],
+      "steps": [
+        [
+          0,
+          1,
+          "Pilot selects GUIDED; operator leases control"
+        ],
+        [
+          0,
+          1,
+          "Bounded move request / reviewed route"
+        ],
+        [
+          1,
+          1,
+          "Check mode, GPS, EKF, battery, video, limits"
+        ],
+        [
+          1,
+          2,
+          "Velocity-only BODY_NED setpoint"
+        ],
+        [
+          2,
+          3,
+          "SET_POSITION_TARGET_LOCAL_NED"
+        ],
+        [
+          3,
+          2,
+          "Position / mode telemetry"
+        ],
+        [
+          2,
+          1,
+          "Feedback; stop or pause if invalid"
+        ]
+      ],
+      "caption": "Velocity setpoints have no COMMAND_ACK. The application observes telemetry; the FC closes the stabilization loop.",
+      "mermaid": "sequenceDiagram\n participant P as Pilot / browser\n participant S as Station\n participant L as MAVLink link\n participant F as ArduCopter\n P->>F: Select GUIDED after safe manual hover\n P->>S: Enable lease and request bounded movement\n S->>S: Validate flight state, freshness and envelope\n alt Gate fails\n S-->>P: Reject / pause\n else Allowed\n S->>L: BODY_NED velocity setpoint\n L->>F: SET_POSITION_TARGET_LOCAL_NED\n F-->>L: Telemetry feedback\n L-->>S: Updated position and mode\n end\n"
+    },
+    "video_seq": {
+      "id": "video_seq",
+      "title": "UML uploaded-video detection sequence",
+      "kind": "sequence",
+      "actors": [
+        "Operator / UI",
+        "FastAPI",
+        "Video / YOLO",
+        "Tracker / UI"
+      ],
+      "steps": [
+        [
+          0,
+          1,
+          "Upload video + choose model"
+        ],
+        [
+          1,
+          1,
+          "Check demo mode, token, size and decoding"
+        ],
+        [
+          1,
+          2,
+          "Swap source; clear lease and old tracks"
+        ],
+        [
+          2,
+          2,
+          "Read latest frame; enhance; infer"
+        ],
+        [
+          2,
+          3,
+          "Normalize classes and timestamp boxes"
+        ],
+        [
+          2,
+          3,
+          "Annotated MJPEG for same source frame"
+        ],
+        [
+          3,
+          0,
+          "Candidate evidence + operator review"
+        ]
+      ],
+      "caption": "Uploaded footage is a local test input. Aircraft telemetry remains simulated and no MAVLink connection is opened.",
+      "mermaid": "sequenceDiagram\n actor O as Operator\n participant API as FastAPI\n participant V as Video + YoloDetector\n participant I as Intelligence\n O->>API: POST /api/video/upload\n API->>API: Authenticate; require demo; validate video\n API->>V: Load source, model and enhancement\n loop Newest available frame\n V->>V: Decode + optional enhancement + YOLO\n V->>I: Normalized timestamped detections\n V-->>O: Frame-matched annotated MJPEG\n I-->>O: Persistent candidate evidence\n end\n"
+    },
+    "activity": {
+      "id": "activity",
+      "title": "UML mission activity view",
+      "nodes": [
+        {
+          "id": "plan",
+          "label": "Draft search route",
+          "x": 350,
+          "y": 10,
+          "w": 300,
+          "h": 55,
+          "kind": "box"
+        },
+        {
+          "id": "validate",
+          "label": "Validate route / review",
+          "x": 350,
+          "y": 100,
+          "w": 300,
+          "h": 55,
+          "kind": "box"
+        },
+        {
+          "id": "gate",
+          "label": "Flight + lease gates pass?",
+          "x": 350,
+          "y": 190,
+          "w": 300,
+          "h": 75,
+          "kind": "diamond"
+        },
+        {
+          "id": "run",
+          "label": "Stream bounded velocity",
+          "x": 350,
+          "y": 310,
+          "w": 300,
+          "h": 65,
+          "kind": "box"
+        },
+        {
+          "id": "pause",
+          "label": "Pause / reject\nwait for operator",
+          "x": 20,
+          "y": 310,
+          "w": 270,
+          "h": 75,
+          "kind": "box"
+        },
+        {
+          "id": "end",
+          "label": "Complete / cancel",
+          "x": 705,
+          "y": 310,
+          "w": 270,
+          "h": 75,
+          "kind": "box"
+        }
+      ],
+      "edges": [
+        {
+          "a": "plan",
+          "b": "validate",
+          "label": "",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "validate",
+          "b": "gate",
+          "label": "",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "gate",
+          "b": "run",
+          "label": "yes",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "gate",
+          "b": "pause",
+          "label": "no",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "run",
+          "b": "end",
+          "label": "done",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "run",
+          "b": "pause",
+          "label": "fault",
+          "side": "auto",
+          "style": "solid"
+        }
+      ],
+      "caption": "Fault, person-policy and pilot events pause the route. Human review and an explicit resume action are required.",
+      "mermaid": "flowchart TD\n A([Start]) --> B[Draft search route]\n B --> C[Validate points and review obstacles]\n C --> D{All control gates pass?}\n D -->|No| P[Reject or pause]\n D -->|Yes| R[Stream bounded velocity setpoints]\n R --> F{Fault, person policy or pilot mode change?}\n F -->|Yes| P\n F -->|No| E{Final point reached?}\n E -->|No| R\n E -->|Yes| Z([Complete])\n P --> H[Human review and explicit resume]\n",
+      "kind": "graph"
+    },
+    "state": {
+      "id": "state",
+      "title": "UML mission state view",
+      "nodes": [
+        {
+          "id": "empty",
+          "label": "empty",
+          "x": 20,
+          "y": 70,
+          "w": 240,
+          "h": 70,
+          "kind": "box"
+        },
+        {
+          "id": "ready",
+          "label": "ready",
+          "x": 380,
+          "y": 70,
+          "w": 240,
+          "h": 70,
+          "kind": "box"
+        },
+        {
+          "id": "run",
+          "label": "running",
+          "x": 740,
+          "y": 70,
+          "w": 240,
+          "h": 70,
+          "kind": "box"
+        },
+        {
+          "id": "pause",
+          "label": "paused",
+          "x": 380,
+          "y": 330,
+          "w": 240,
+          "h": 70,
+          "kind": "box"
+        },
+        {
+          "id": "done",
+          "label": "completed / cancelled",
+          "x": 740,
+          "y": 330,
+          "w": 240,
+          "h": 70,
+          "kind": "box"
+        }
+      ],
+      "edges": [
+        {
+          "a": "empty",
+          "b": "ready",
+          "label": "validate / load",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "ready",
+          "b": "run",
+          "label": "start + gates",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "run",
+          "b": "pause",
+          "label": "fault / pause / pilot",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "pause",
+          "b": "run",
+          "label": "explicit resume + gates",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "run",
+          "b": "done",
+          "label": "finish / cancel",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "pause",
+          "b": "ready",
+          "label": "edit / reload",
+          "side": "auto",
+          "style": "solid"
+        }
+      ],
+      "caption": "Editing a paused route loads a new ready plan. Start begins at point one; Resume continues the paused route.",
+      "mermaid": "stateDiagram-v2\n [*] --> empty\n empty --> ready: validate/load\n ready --> running: start and gates pass\n running --> paused: fault / operator / person policy\n paused --> running: explicit resume and gates pass\n paused --> ready: edit and revalidate\n running --> completed: last waypoint and hold done\n running --> cancelled: cancel\n paused --> cancelled: cancel\n",
+      "kind": "graph"
+    },
+    "data": {
+      "id": "data",
+      "title": "Persistence and incident evidence",
+      "nodes": [
+        {
+          "id": "events",
+          "label": "events table\nid / UTC time / kind / JSON",
+          "x": 20,
+          "y": 45,
+          "w": 440,
+          "h": 95,
+          "kind": "box"
+        },
+        {
+          "id": "missions",
+          "label": "missions table\nid / name / plan JSON",
+          "x": 540,
+          "y": 45,
+          "w": 440,
+          "h": 95,
+          "kind": "box"
+        },
+        {
+          "id": "incident",
+          "label": "incident event payload\nnote / aircraft position / filename",
+          "x": 20,
+          "y": 325,
+          "w": 440,
+          "h": 95,
+          "kind": "box"
+        },
+        {
+          "id": "files",
+          "label": "Local files\nJPEG / AVI / uploads",
+          "x": 540,
+          "y": 325,
+          "w": 440,
+          "h": 95,
+          "kind": "box"
+        }
+      ],
+      "edges": [
+        {
+          "a": "events",
+          "b": "incident",
+          "label": "kind = incident",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "incident",
+          "b": "files",
+          "label": "snapshot filename",
+          "side": "auto",
+          "style": "solid"
+        },
+        {
+          "a": "missions",
+          "b": "events",
+          "label": "execution events",
+          "side": "auto",
+          "style": "dashed"
+        }
+      ],
+      "caption": "Incidents are JSON payloads in events, not a separate incident table. Positions describe the aircraft, not an inferred victim.",
+      "mermaid": "erDiagram\n EVENTS {\n integer id PK\n text time_utc\n text kind\n text payload_json\n }\n MISSIONS {\n integer id PK\n text name\n text plan_json\n }\n SNAPSHOT_FILES {\n text filename\n binary jpeg\n }\n EVENTS ||--o| SNAPSHOT_FILES : \"incident payload references filename\"\n",
+      "kind": "graph"
+    },
+    "motors": {
+      "id": "motors",
+      "title": "Verified Quad X positions and rotation",
+      "nodes": [
+        {
+          "id": "fl",
+          "label": "Front-left: D / Motor 3\nOutput 2: function 35\nClockwise",
+          "x": 25,
+          "y": 30,
+          "w": 380,
+          "h": 125,
+          "kind": "box"
+        },
+        {
+          "id": "fr",
+          "label": "Front-right: A / Motor 1\nOutput 1: function 33\nCounterclockwise",
+          "x": 595,
+          "y": 30,
+          "w": 380,
+          "h": 125,
+          "kind": "box"
+        },
+        {
+          "id": "bl",
+          "label": "Rear-left: C / Motor 2\nOutput 4: function 34\nCounterclockwise",
+          "x": 25,
+          "y": 330,
+          "w": 380,
+          "h": 125,
+          "kind": "box"
+        },
+        {
+          "id": "br",
+          "label": "Rear-right: B / Motor 4\nOutput 3: function 36\nClockwise",
+          "x": 595,
+          "y": 330,
+          "w": 380,
+          "h": 125,
+          "kind": "box"
+        },
+        {
+          "id": "nose",
+          "label": "NOSE / FRONT\nView from above",
+          "x": 380,
+          "y": 205,
+          "w": 240,
+          "h": 80,
+          "kind": "box"
+        }
+      ],
+      "edges": [],
+      "caption": "The user confirmed these positions and directions after remapping. Test letters, motor numbers and physical outputs are different identifiers.",
+      "mermaid": "flowchart TB\n Nose[\"Front / nose; view from above\"]\n FL[\"D / Motor 3 / Output 2 / CW\"]\n FR[\"A / Motor 1 / Output 1 / CCW\"]\n BL[\"C / Motor 2 / Output 4 / CCW\"]\n BR[\"B / Motor 4 / Output 3 / CW\"]\n Nose --> FL\n Nose --> FR\n FL --- BL\n FR --- BR\n",
+      "kind": "graph"
+    }
+  },
+  "sources": [
+    [
+      "S01",
+      "ArduPilot: SpeedyBee F405 AIO board support",
+      "https://ardupilot.org/copter/docs/common-speedybeef405aio.html"
+    ],
+    [
+      "S02",
+      "ExpressLRS: native MAVLink setup and laptop bridging",
+      "https://www.expresslrs.org/software/mavlink/"
+    ],
+    [
+      "S03",
+      "Flywoo: GOKU GM10 Mini V3 GPS specifications",
+      "https://flywoo.net/products/goku-gm10-mini-v3-gps"
+    ],
+    [
+      "S04",
+      "ArduPilot: Guided movement command frames and masks",
+      "https://ardupilot.org/dev/docs/copter-commands-in-guided-mode.html"
+    ],
+    [
+      "S05",
+      "ArduPilot: GCS failsafe",
+      "https://ardupilot.org/copter/docs/gcs-failsafe.html"
+    ],
+    [
+      "S06",
+      "ArduPilot: radio failsafe",
+      "https://ardupilot.org/copter/docs/radio-failsafe.html"
+    ],
+    [
+      "S07",
+      "ArduPilot: battery failsafe",
+      "https://ardupilot.org/copter/docs/failsafe-battery.html"
+    ],
+    [
+      "S08",
+      "ArduPilot: motor connection and motor-test diagrams",
+      "https://ardupilot.org/copter/docs/connect-escs-and-motors.html"
+    ],
+    [
+      "S09",
+      "ArduPilot: radio mode-switch configuration",
+      "https://ardupilot.org/copter/docs/common-rc-transmitter-flight-mode-configuration.html"
+    ],
+    [
+      "S10",
+      "MAVLink: common message definitions",
+      "https://mavlink.io/en/messages/common.html"
+    ],
+    [
+      "S11",
+      "Application repository",
+      "https://github.com/rithinreddy0/aero-ground-station"
+    ],
+    [
+      "S12",
+      "Team AURA source, pinned integration revision",
+      "https://github.com/7-Azhar/major_project/tree/d50829119b598e5b32b352f384fdd25aca367f08"
+    ],
+    [
+      "S13",
+      "RC805 candidate receiver specification",
+      "https://rcmumbai.com/products/rc-805-5-8ghz-8-channel-av-receiver"
+    ],
+    [
+      "S14",
+      "EasyCAP candidate capture-adapter specification",
+      "https://probots.co.in/easycap-a072-usb-2-0-audio-video-capture-adapter.html"
+    ],
+    [
+      "S15",
+      "DFRobot: DFPlayer Mini audio module",
+      "https://www.dfrobot.com/product-1121.html/"
+    ],
+    [
+      "S16",
+      "Seeed Studio: XIAO ESP32S3 family",
+      "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/"
+    ],
+    [
+      "S17",
+      "SpeedyBee manufacturer board manual",
+      "https://spcdn.speedybee.cn/cdn/58507926851031040.pdf"
+    ],
+    [
+      "S18",
+      "ArduPilot: initial flight tuning",
+      "https://ardupilot.org/copter/docs/setting-up-for-tuning.html"
+    ]
+  ]
+}

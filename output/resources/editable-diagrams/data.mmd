@@ -1,0 +1,17 @@
+erDiagram
+ EVENTS {
+ integer id PK
+ text time_utc
+ text kind
+ text payload_json
+ }
+ MISSIONS {
+ integer id PK
+ text name
+ text plan_json
+ }
+ SNAPSHOT_FILES {
+ text filename
+ binary jpeg
+ }
+ EVENTS ||--o| SNAPSHOT_FILES : "incident payload references filename"

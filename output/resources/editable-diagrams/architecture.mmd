@@ -1,0 +1,7 @@
+flowchart LR
+ Pilot[Radio handset + ELRS TX] <-->|RC + MAVLink RF| RX[Aircraft ELRS receiver]
+ RX <-->|UART6| FC[AIO running ArduCopter]
+ Laptop[Mission Planner OR custom application] <-->|UDP or serial| Bridge[TX Backpack or supported TX USB]
+ Bridge <-->|via transmitter RF link| RX
+ Camera[FPV camera + OSD + VTX] -->|5.8 GHz analog| VRX[Video receiver + USB capture]
+ VRX -->|USB video| AI[Laptop video + AI]
